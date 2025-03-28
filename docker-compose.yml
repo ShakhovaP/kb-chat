@@ -1,0 +1,41 @@
+version: '3.8'
+
+services:
+  fastapi-backend:
+    build: 
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - .:/app
+    ports:
+      - "8000:8000"
+    networks:
+      - chat-network
+    environment:
+      - APP_MODE=fastapi
+      - PYTHONPATH=/app
+      - HOST=0.0.0.0
+      - PORT=8000
+    restart: unless-stopped
+
+  chainlit-ui:
+    build: 
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - .:/app
+    ports:
+      - "8501:8501"
+    networks:
+      - chat-network
+    environment:
+      - APP_MODE=chainlit
+      - PYTHONPATH=/app
+      - HOST=0.0.0.0
+      - PORT=8501
+    restart: unless-stopped
+
+networks:
+  chat-network:
+    driver: bridge
+
