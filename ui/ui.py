@@ -16,7 +16,7 @@ async def start():
     session_id = str(ObjectId())
     cl.user_session.set("session_id", session_id)
     welcome_msg = await cl.Message(
-        content="Welcome to the Knowledge Base Assistant! You can upload PDFs or search the knowledge base."
+        content="Welcome to the Knowledge Base Assistant! Simply enter your query to find useful information."
     ).send()
 
 @cl.on_message
