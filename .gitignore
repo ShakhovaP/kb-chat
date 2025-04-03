@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+*$py.class
+
+.env
+*.env
+.venv/
+venv/
+env/
+
+.vscode/
+
+chainlit.md
+.chainlit/
+.files/

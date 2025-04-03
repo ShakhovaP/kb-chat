@@ -61,7 +61,7 @@ class KnowledgeBaseService:
         # Initialize retriever and LLM
         self.retriever = AzureAISearchRetriever(
             content_key="content", 
-            top_k=1, 
+            top_k=7, 
             index_name=self.index_name
         )
 
@@ -357,30 +357,41 @@ class KnowledgeBaseService:
 
             contextualize_q_system_prompt = (
                 """
-                Given a chat history and the latest user question
-                which might reference context in the chat history,
-                formulate a standalone question which can be understood
-                without the chat history. Do NOT answer the question, just
-                reformulate it if needed and otherwise return it as is.
+                Given a chat history and the latest user question which might reference context in the 
+                chat history, formulate a standalone question which can be understood without the chat history.
+                Do NOT answer the question, just reformulate it if needed and otherwise return it as is.
+                To the generated question add the request to search for Danish companies examples and their methods
+                related to the topic.
                 """
             )
             contextualize_q_prompt = ChatPromptTemplate.from_messages(
                 [
                     ("system", contextualize_q_system_prompt),
                     MessagesPlaceholder("chat_history"),
-                    ("human", "{input}"),
+                    ("human", "{input}. "),
                 ]
             )
             history_aware_retriever = create_history_aware_retriever(
                 self.llm, self.retriever, contextualize_q_prompt
             )
+            # retrieved_documents = history_aware_retriever.invoke({
+            #     "input": query,
+            #     "chat_history": message_history.messages
+            # })
+            # document_ids = [doc.metadata.get('id', 'unknown_id') for doc in retrieved_documents]
+            # references = "\nReferences:"
+            # for i, doc_id in enumerate(document_ids):
+            #     references += f"\n{i}. {doc_id}"
 
             # Answer question
             qa_system_prompt = (
-                '''You are a helpful assistant that answers questions based on the provided pieces of retrieved context. 
-                If the context doesn't contain relevant information to answer the question,
-                state that you don't have enough information and provide a general response based on your knowledge.
-                {context}'''
+                """You are a helpful assistant that answers questions based on the provided pieces of 
+                retrieved context. When responding:
+                1. If possible highlight specific examples of Danish companies mentioned in the retrieved documents.
+                Do NOT highlight that the retrieved documents doesn't contain such examples.
+                2. If the context doesn't contain relevant information provide a general response based on your knowledge without informing about it.
+                
+                {context}"""
 
             ) 
             qa_prompt = ChatPromptTemplate.from_messages(
@@ -399,10 +410,12 @@ class KnowledgeBaseService:
 
             self.logger.info("response", response)
             message_history.add_user_message(query)
+            # message_history.add_ai_message(response['answer'] + references)
             message_history.add_ai_message(response['answer'])
             return {
                 "question": query,
                 "answer": response['answer'],
+                # "answer": response['answer'] + references,
                 # "source": "knowledge_base" if kb_results else "model_general_knowledge",
                 # "kb_results_count": len(kb_results) if kb_results else None,
             }

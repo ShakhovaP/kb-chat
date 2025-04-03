@@ -4,14 +4,11 @@ from chainlit.input_widget import TextInput, Slider
 import aiohttp
 import json
 from bson import ObjectId
-# from langchain.memory import ConversationBufferMemory
-
 
 # Configuration
 # API_BASE_URL = "http://localhost:8000"
 API_BASE_URL = "http://fastapi-backend:8000"
 
-# memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
 
 @cl.on_chat_start
 async def start():
@@ -27,6 +24,10 @@ async def main(message: cl.Message):
     """Handle user messages and maintain chat history."""
     user_message = message.content.strip()
 
+    # Create a loading message that will be displayed while waiting for the response
+    msg = cl.Message(content="Searching the knowledge base...")
+    await msg.send()
+
     # Make API request with chat history
     search_url = f"{API_BASE_URL}/chat"
     print(cl.user_session.get("session_id"))
@@ -36,8 +37,6 @@ async def main(message: cl.Message):
         # "top_k": 5,
         # "chat_history": chat_history,  # Send properly formatted history
     }
-    print('params', params)
-
     try:
         async with aiohttp.ClientSession() as session:
             # async with session.get(search_url, params=params) as response:
@@ -58,11 +57,15 @@ async def main(message: cl.Message):
                             if "content" in source:
                                 answer_content += f"Content: {source['content']}\n\n"
 
+                    # Remove loading message and send the actual content
+                    await msg.remove()
                     await cl.Message(content=answer_content).send()
 
                 else:
                     error_text = await response.text()
+                    await msg.remove()
                     await cl.Message(content=f"⚠️ I encountered an error while searching: {error_text}").send()
 
     except Exception as e:
+        await msg.remove()
         await cl.Message(content=f"⚠️ I encountered an error while trying to answer your question: {str(e)}").send()
