@@ -390,6 +390,7 @@ class KnowledgeBaseService:
                 1. If possible highlight specific examples of Danish companies mentioned in the retrieved documents.
                 Do NOT highlight that the retrieved documents doesn't contain such examples.
                 2. If the context doesn't contain relevant information provide a general response based on your knowledge without informing about it.
+                3. Add follow-up question at the end of the response.
                 
                 {context}"""
 
