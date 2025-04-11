@@ -1,7 +1,7 @@
 import os
 import time
 import logging
-from typing import List, Dict, Optional
+from typing import List, Dict
 from io import BytesIO
 
 import tiktoken
@@ -10,23 +10,9 @@ from PyPDF2 import PdfReader, PdfWriter
 
 from azure.search.documents.indexes.models import (
     SearchIndex, SearchField, SearchFieldDataType, 
-    VectorSearch, VectorSearchAlgorithmConfiguration, 
-    VectorSearchProfile, HnswParameters
+    VectorSearch, SearchableField, SimpleField,
+    VectorSearchProfile, HnswAlgorithmConfiguration, 
 )
-from azure.search.documents.models import VectorizedQuery
-
-from langchain_openai import AzureChatOpenAI
-from langchain_mongodb import MongoDBChatMessageHistory
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain.chains import (
-    create_history_aware_retriever,
-    create_retrieval_chain,
-    # create_stuff_documents_chain,
-    # ConversationChain
-)
-from langchain.chains.combine_documents import create_stuff_documents_chain
-from langchain.memory import ConversationBufferMemory
-from langchain_community.retrievers import AzureAISearchRetriever
 from services.config_manager import ConfigManager
 from services.azure_service import AzureServiceClients
 
@@ -55,23 +41,7 @@ class KnowledgeBaseService:
         self.index_name = self.config_manager.get_required_env("AZURE_SEARCH_INDEX_NAME")
         self.openai_deployment = self.config_manager.get_required_env("AZURE_OPENAI_GPT_DEPLOYMENT")
         self.openai_embeddings_deployment = self.config_manager.get_required_env("AZURE_OPENAI_EMBEDDING_DEPLOYMENT")
-        self.mongodb_uri = self.config_manager.get_required_env("MONGODB_URI")
         self.embedding_dimensions = 1536
-
-        # Initialize retriever and LLM
-        self.retriever = AzureAISearchRetriever(
-            content_key="content", 
-            top_k=7, 
-            index_name=self.index_name
-        )
-
-        self.llm = AzureChatOpenAI(
-            azure_deployment=self.openai_deployment,
-            api_version=self.config_manager.get_required_env("AZURE_OPENAI_API_VERSION"),
-            temperature=0,
-            max_tokens=None,
-            verbose=True
-        )
 
     def extract_text_from_pdf(self, file_path: str) -> List[str]:
         """
@@ -183,6 +153,48 @@ class KnowledgeBaseService:
         except Exception as e:
             self.logger.error(f"PDF processing error: {str(e)}")
             raise
+    
+    async def process_pdf_with_link(self, file_path: str, file_name: str, url: str) -> Dict[str, str]:
+        """
+        Process a PDF file through the entire pipeline.
+        
+        :param file_path: Path to the PDF file
+        :return: Processing result with document ID
+        """
+        try:
+            text_arr = self.extract_text_from_pdf(file_path)
+            file_name = os.path.basename(file_path).replace(".pdf", "")
+
+            structured_text_arr = []
+            chunks = []
+            
+            for i, text in enumerate(text_arr):
+                structured_data = self.structure_content_with_openai(text)
+                structured_text_arr.append(structured_data)
+
+                split_chunks = self.split_text_into_chunks(structured_data)
+                
+                chunks.extend([
+                    {
+                        "id": f"{file_name}_doc{i}_c{j}",
+                        "content": chunk,
+                        "embedding": self.generate_embeddings(chunk),
+                        "file_name":file_name,
+                        "file_url": url,
+                    }
+                    for j, chunk in enumerate(split_chunks)
+                ])
+
+            self.upload_vectors_to_search(chunks)
+            
+            return {
+                "document": file_path,
+                "status": "processed"
+            }
+        
+        except Exception as e:
+            self.logger.error(f"PDF processing error: {str(e)}")
+            raise
 
     def split_text_into_chunks(self, text: str, max_tokens: int = 500, overlap: int = 50) -> List[str]:
         """
@@ -267,63 +279,49 @@ class KnowledgeBaseService:
     def create_search_index(self):
         """Create Azure AI Search index"""
         # logger.info("Checking if search index exists")
-        
-        # Check if index exists
         idx_exists = False
-        self.logger.info(f"list_indexes: {self.azure_services.search_index_client.list_indexes()}")
+        print(f"list_indexes: {self.azure_services.search_index_client.list_indexes()}")
         if self.index_name in [index.name for index in self.azure_services.search_index_client.list_indexes()]:
-            self.logger.info(f"Index {self.index_name} already exists")
+            print(f"Index {self.index_name} already exists")
             idx_exists = True
-        
+
         # Create index with vector search capability
         fields = [
-            SearchField(
+            SimpleField(
                 name="id", 
                 type=SearchFieldDataType.String, 
                 key=True,
                 sortable=True,
                 filterable=True,
             ),
-            SearchField(name="content", type=SearchFieldDataType.String),
-            # SearchField(name="metadata", type=SearchFieldDataType.String, searchable=True),
+            SearchableField(name="file_name", type=SearchFieldDataType.String, searchable=True),
+            SearchableField(name="file_url", type=SearchFieldDataType.String),
+            SearchableField(name="content", type=SearchFieldDataType.String),
             SearchField(
                 name="embedding",
                 type=SearchFieldDataType.Collection(SearchFieldDataType.Single),
-                searchable=True,
-                vector_search_dimensions=self.embedding_dimensions,
-                vector_search_configuration="vector-config",  # This should match the profile name
-            )
+                searchable=True, vector_search_dimensions=self.embedding_dimensions, 
+                vector_search_profile_name="vector-config")
+            
         ]       
         vector_search = VectorSearch(
-            algorithms={
-                "hnsw": VectorSearchAlgorithmConfiguration(
-                    name="hnsw",
-                    kind="hnsw",
-                    parameters=HnswParameters(
-                        m=4,
-                        ef_construction=400,
-                        ef_search=500,
-                        metric="cosine"
-                    )
-                )
-            },
-            profiles={
-                "vector-config": VectorSearchProfile(  # Change this name to match what you use in SearchField
-                    name="vector-config",  # This should match
-                    algorithm_configuration_name="hnsw"
-                )
-            }
+            algorithms=[HnswAlgorithmConfiguration(name="hnsw")],
+            profiles=[VectorSearchProfile(
+                  name="vector-config",
+                  algorithm_configuration_name="hnsw"
+            )]
         )
-        
+
+
         index = SearchIndex(
             name=self.index_name, 
             fields=fields, 
             vector_search=vector_search,
             # semantic_search=semantic_search,
         )
-        self.logger.info(f"{'Updating' if idx_exists else 'Creating'}  index {self.index_name}")
-        self.azure_services.search_index_client.create_index(index)
-
+        print(f"{'Updating' if idx_exists else 'Creating'}  index {self.index_name}")
+        self.azure_services.search_index_client.create_or_update_index(index)
+        
     def upload_vectors_to_search(self, documents):
     # def upload_vectors_to_search(embeddings):
         """
@@ -340,97 +338,3 @@ class KnowledgeBaseService:
                 self.logger.exception(f"Error uploading batch to search index: {e}")
             
             time.sleep(1)
-
-    async def chat(self, query: str, session_id: str = "anonymous") -> Dict[str, str]:
-        """
-        Chat method with context-aware retrieval and response generation.
-        
-        :param query: User's chat query
-        :param session_id: Unique session identifier
-        :return: Chat response dictionary
-        """
-        try:
-            message_history = MongoDBChatMessageHistory(
-                connection_string=self.mongodb_uri, 
-                session_id=session_id
-            )
-
-            contextualize_q_system_prompt = (
-                """
-                Given a chat history and the latest user question which might reference context in the 
-                chat history, formulate a standalone question which can be understood without the chat history.
-                Do NOT answer the question, just reformulate it if needed and otherwise return it as is.
-                To the generated question add the request to search for Danish companies examples and their methods
-                related to the topic.
-                """
-            )
-            contextualize_q_prompt = ChatPromptTemplate.from_messages(
-                [
-                    ("system", contextualize_q_system_prompt),
-                    MessagesPlaceholder("chat_history"),
-                    ("human", "{input}. "),
-                ]
-            )
-            history_aware_retriever = create_history_aware_retriever(
-                self.llm, self.retriever, contextualize_q_prompt
-            )
-            # retrieved_documents = history_aware_retriever.invoke({
-            #     "input": query,
-            #     "chat_history": message_history.messages
-            # })
-            # document_ids = [doc.metadata.get('id', 'unknown_id') for doc in retrieved_documents]
-            # references = "\nReferences:"
-            # for i, doc_id in enumerate(document_ids):
-            #     references += f"\n{i}. {doc_id}"
-
-            # Answer question
-            qa_system_prompt = (
-                """You are a helpful assistant that answers questions based on the provided pieces of 
-                retrieved context. When responding:
-                1. If possible highlight specific examples of Danish companies mentioned in the retrieved documents.
-                Do NOT highlight that the retrieved documents doesn't contain such examples.
-                2. If the context doesn't contain relevant information provide a general response based on your knowledge without informing about it.
-                3. Add follow-up question at the end of the response.
-                
-                {context}"""
-
-            ) 
-            qa_prompt = ChatPromptTemplate.from_messages(
-                [
-                ("system", qa_system_prompt), MessagesPlaceholder("chat_history"), ("human", "{input}"),
-
-                ]
-            )  
-            question_answer_chain = create_stuff_documents_chain(self.llm, qa_prompt) 
-            rag_chain = create_retrieval_chain(
-                history_aware_retriever, question_answer_chain
-            )
-            self.logger.info("before responce")
-
-            response = rag_chain.invoke({"input": query, "chat_history": message_history.messages})
-
-            self.logger.info("response", response)
-            message_history.add_user_message(query)
-            # message_history.add_ai_message(response['answer'] + references)
-            message_history.add_ai_message(response['answer'])
-            return {
-                "question": query,
-                "answer": response['answer'],
-                # "answer": response['answer'] + references,
-                # "source": "knowledge_base" if kb_results else "model_general_knowledge",
-                # "kb_results_count": len(kb_results) if kb_results else None,
-            }
-        
-        except Exception as e:
-            self.logger.error(f"Chat method error: {e}")
-            raise
-
-def main():
-    """
-    Application entry point for knowledge base service.
-    """
-    kb_service = KnowledgeBaseService()
-    # Additional setup or initialization can be added here
-
-if __name__ == "__main__":
-    main()

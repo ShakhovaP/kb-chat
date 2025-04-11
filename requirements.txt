@@ -18,3 +18,10 @@ langchain-community
 langchain_openai
 langchain_mongodb
 pymongo
+matplotlib
+pandas
+bertopic
+scikit-learn
+sentence_transformers
+openpyxl
+hf_xet

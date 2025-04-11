@@ -1,9 +1,12 @@
+#routes.py
 from fastapi import FastAPI, UploadFile, HTTPException, Query
 import uvicorn
 import tempfile
 import os
 import logging
 from services.knowledge_base_service import KnowledgeBaseService
+from services.chat_service import ChatService
+from services.analysis_service import AnalysisService
 from pydantic import BaseModel
 from typing import Dict, List, Optional
 import uuid
@@ -16,6 +19,8 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(title="PDF Processing Service")
 kb = KnowledgeBaseService()
+chat = ChatService()
+analysis = AnalysisService()
 
 class ConversationRequest(BaseModel):
     query: str
@@ -35,7 +40,7 @@ def get_chat_history(session_id: str = Query(None)):
 
 
 @app.post("/kb_upload")
-async def process_pdf(file: UploadFile):
+async def process_pdf(file: UploadFile, url: str):
     """
     Process a PDF file: extract text, structure content, generate embeddings, and store in search.
     """
@@ -48,7 +53,8 @@ async def process_pdf(file: UploadFile):
         temp_file_path = temp_file.name
     
     try:
-        result = await kb.process_pdf_file(temp_file_path)
+        # result = await kb.process_pdf_file(temp_file_path)
+        result = await kb.process_pdf_with_link(temp_file_path, file.filename, url)
         return {
             "message": "PDF processed successfully",
             "filename": file.filename,
@@ -88,6 +94,31 @@ async def search_knowledge_base(
     except Exception as e:
         logger.error(f"Error searching knowledge base: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error searching knowledge base: {str(e)}")
+    
+@app.post("/excel_upload")
+async def process_excel(file: UploadFile, session_id: str = Query(...)):
+    """
+    Process an Excel file for NPS analysis
+    """
+    if not file.filename.lower().endswith(('.xlsx', '.xls')):
+        raise HTTPException(status_code=400, detail="Only Excel files are supported")
+    
+    # Create temporary file to store uploaded Excel
+    with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file.filename)[1]) as temp_file:
+        temp_file.write(await file.read())
+        temp_file_path = temp_file.name
+    
+    try:
+        analysis_results = analysis.analyze_document(temp_file_path, session_id)        
+        return analysis_results
+    
+    except Exception as e:
+        logger.error(f"Error processing Excel: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error processing Excel: {str(e)}")
+    
+    finally:
+        # Clean up temporary file
+        os.unlink(temp_file_path)
 
 @app.post("/chat")
 async def answer_question(
@@ -100,9 +131,9 @@ async def answer_question(
     Answer user questions using knowledge base search and Azure OpenAI.
     """
     logger.info("/chat")
-    print("/chat")
+    # print("/chat")
     try:
-        results = await kb.chat(query=query, session_id=sessionId)
+        results = await chat.chat(query=query, session_id=sessionId)
         return results
 
     except Exception as e:
