@@ -85,32 +85,77 @@ class AnalysisService:
                 "name": "Promoters",
                 "number": n_promoters,
                 "percentage": (n_promoters / n_total) * 100,
-                "color": "green"
+                "color": "#4CAF50"
             }, 
             {
                 "name": "Passives",
                 "number": n_passives,
                 "percentage": (n_passives / n_total) * 100,
-                "color": "gray"
+                "color": "#9E9E9E"
             }, 
             {
                 "name": "Detractors",
                 "number": n_detractors,
                 "percentage": (n_detractors / n_total) * 100,
-                "color": "red"
+                "color": "#F44336"
             }
         ]
 
-        fig = plt.figure(figsize=(6, 6))
-        fig.patch.set_alpha(0.1)
-        plt.pie(
-            x=[cat["percentage"] for cat in categories], 
-            labels=[cat["name"] for cat in categories], 
-            colors=[cat["color"] for cat in categories], 
-            autopct="%1.1f%%", 
-            startangle=140
+        # fig = plt.figure(figsize=(6, 6))
+        # fig.patch.set_alpha(0.1)
+        # plt.pie(
+        #     x=[cat["percentage"] for cat in categories], 
+        #     labels=[cat["name"] for cat in categories], 
+        #     colors=[cat["color"] for cat in categories], 
+        #     autopct="%1.1f%%", 
+        #     startangle=140
+        # )
+        # plt.title("NPS Distribution")
+        fig = plt.figure(figsize=(10, 8), dpi=100)
+        fig.patch.set_alpha(0.0)
+
+        # Create the pie chart with enhanced styling
+        wedges, texts, autotexts = plt.pie(
+            x=[cat["percentage"] for cat in categories],
+            labels=None, 
+            colors=[cat["color"] for cat in categories],
+            autopct=lambda pct: f"{pct:.1f}%" if pct > 5 else "",
+            startangle=140,
+            shadow=True,
+            explode=[0.05] * len(categories),  # Slightly explode all slices
+            textprops={'fontsize': 14},
+            wedgeprops={'linewidth': 1, 'edgecolor': 'grey'}
         )
-        plt.title("NPS Distribution")
+
+        # Enhance the autopct text
+        for autotext in autotexts:
+            autotext.set_color('white')
+            autotext.set_fontweight('bold')
+            autotext.set_fontsize(12)
+
+        # Add a legend with category names and percentages
+        plt.legend(
+            wedges,
+            [f"{cat['name']} ({cat['percentage']}%)" for cat in categories],
+            title="NPS Categories",
+            loc="center left",
+            bbox_to_anchor=(0.9, 0, 0.5, 1)
+        )
+
+        # Add a styled title
+        plt.title(
+            "NPS Distribution", 
+            fontsize=22, 
+            fontweight='bold', 
+            pad=20,
+            color='#333333'
+        )
+
+        # Add subtle grid in the background (optional)
+        plt.grid(False)
+
+        # Ensure the plot is tight and there's no wasted space
+        plt.tight_layout()
         
         return categories, fig
 
