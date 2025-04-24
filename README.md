@@ -14,6 +14,8 @@ kb-chat/
 ├── services/
 │ ├── chat_service.py # Logic for handling chat requests and OpenAI interactions 
 │ ├── knowledge_base_service.py # Handles PDF ingestion, embedding, and search 
+│ ├── azure_service.py #  Access to Azure services
+│ ├── config_manager.py #  Configuration files and environment variables management
 │ └── analysis_service.py # Handles Excel-based NPS analysis 
 ├── ui/ # Chatbot frontend (ui.py)
 ├── public/ # Publicly served assets 
