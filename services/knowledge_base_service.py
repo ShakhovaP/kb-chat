@@ -15,6 +15,11 @@ from azure.search.documents.indexes.models import (
 )
 from services.config_manager import ConfigManager
 from services.azure_service import AzureServiceClients
+import tempfile
+import moviepy as mp
+import azure.cognitiveservices.speech as speechsdk
+from spire.presentation import *
+from spire.presentation.common import *
 
 # Configure logging and environment variables
 load_dotenv()
@@ -78,6 +83,51 @@ class KnowledgeBaseService:
         except Exception as e:
             self.logger.error(f"PDF text extraction error: {e}")
             raise
+    
+    def extract_audio(self, video_path):
+        # Create a temporary file with .wav extension
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_audio_file:
+            temp_audio_path = temp_audio_file.name
+        
+        try:
+            print(f"Extracting audio from {video_path}")
+            video = mp.VideoFileClip(video_path)
+            video.audio.write_audiofile(temp_audio_path, codec='pcm_s16le')
+            
+            return temp_audio_path
+        except Exception as e:
+            try:
+                os.unlink(temp_audio_path)
+            except:
+                pass
+            raise e
+
+    def process_speech(self, video_path, speech_config):
+        temp_audio_path = None
+        try:
+            temp_audio_path = self.extract_audio(video_path=video_path)
+            
+            audio_config = speechsdk.AudioConfig(filename=temp_audio_path)
+            speech_recognizer = speechsdk.SpeechRecognizer(
+                speech_config=speech_config, 
+                audio_config=audio_config
+            )
+            
+            speech_recognition_result = speech_recognizer.recognize_once_async().get()
+            return speech_recognition_result.text
+        finally:
+            # Clean up temporary file
+            if temp_audio_path and os.path.exists(temp_audio_path):
+                try:
+                    # Make sure to delete all references that might keep the file open
+                    speech_recognizer = None
+                    audio_config = None
+                    
+                    # Try to delete, but don't crash if it fails
+                    os.unlink(temp_audio_path)
+                    print(f"Temporary audio file deleted")
+                except PermissionError:
+                    print(f"Could not delete temporary file: {temp_audio_path}")
 
     def structure_content_with_openai(self, text: str) -> str:
         """
@@ -195,6 +245,70 @@ class KnowledgeBaseService:
         except Exception as e:
             self.logger.error(f"PDF processing error: {str(e)}")
             raise
+
+    async def process_video_with_link(self, file_path: str, file_name: str, url: str) -> Dict[str, str]:
+        """
+        Process a video file through the entire pipeline.
+        
+        :param file_path: Path to the video file
+        :return: Processing result with document ID
+        """
+        try:
+
+            speech_config = self.azure_services.speech_config
+            transcription = self.process_speech(file_path, speech_config)
+
+            file_name = os.path.basename(file_path).replace(".mp4", "")
+
+            chunks = []
+            split_chunks = self.split_text_into_chunks(transcription)
+                
+            chunks.extend([
+                {
+                    "id": f"{file_name}_c{j}",
+                    "content": chunk,
+                    "embedding": self.generate_embeddings(chunk),
+                    "file_name":file_name,
+                    "file_url": url,
+                }
+                for j, chunk in enumerate(split_chunks)
+            ])
+
+            self.upload_vectors_to_search(chunks)
+            
+            return {
+                "document": file_path,
+                "status": "processed"
+            }
+        
+        except Exception as e:
+            self.logger.error(f"Video processing error: {str(e)}")
+            raise
+
+    async def process_pptx_with_link(self, file_path: str, file_name: str, url: str) -> Dict[str, str]:
+        try:
+            presentation = Presentation()
+            presentation.LoadFromFile(file_path)
+            # Or load a PowerPoint presentation in PPT format
+            #presentation.LoadFromFile("Sample.ppt")
+
+            # Convert the presentation to PDF format
+            with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as temp_pdf_file:
+                temp_pdf_path = temp_pdf_file.name
+            presentation.SaveToFile(temp_pdf_path, FileFormat.PDF)
+            presentation.Dispose()
+
+            result = await self.process_pdf_with_link(temp_pdf_path, file_name, url)
+            return result
+        finally:
+            # Clean up temporary file
+            if temp_pdf_path and os.path.exists(temp_pdf_path):
+                try:
+                    # Try to delete, but don't crash if it fails
+                    os.unlink(temp_pdf_path)
+                    print(f"Temporary pdf file deleted")
+                except PermissionError:
+                    print(f"Could not delete temporary file: {temp_pdf_path}")
 
     def split_text_into_chunks(self, text: str, max_tokens: int = 500, overlap: int = 50) -> List[str]:
         """

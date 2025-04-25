@@ -45,25 +45,179 @@ class AnalysisService:
         self.sentence_model = SentenceTransformer('all-MiniLM-L6-v2')
         self.bertopic_model = BERTopic(embedding_model=self.sentence_model, calculate_probabilities=True)
 
-    def read_excel(self, file_path: str) -> Optional[pd.DataFrame]:
+    def read_excel(self, file_path: str) -> pd.DataFrame | dict:
         """
-        Read customer feedback data from an Excel file.
+        Read an Excel file and extract score and comment columns regardless of language.
         
         Args:
             file_path: Path to the Excel file
             
         Returns:
-            DataFrame with Score and Comments columns, or None if there's an error
+            DataFrame with standardized 'Score' and 'Comments' columns, or
+            Dictionary with error information if processing failed
         """
         try:
+            # Common column name patterns for scores and comments in different languages
+            score_patterns = ['score', 'nps-score', 'scorer', 'punktzahl', 'bewertung', 'poäng', 'vurdering']
+            comment_patterns = ['comment', 'kommentar', 'bemerkung', 'notat', 'feedback']
+            
+            # Read the Excel file
             df = pd.read_excel(file_path)
-            scores_comments_df = df[['Score', 'Comments']]
+            
+            if df.empty:
+                return {"error": "The Excel file is empty"}
+            
+            # Find score and comment columns by pattern matching
+            score_col = None
+            comment_col = None
+            
+            # Try to find columns using pattern matching
+            for col in df.columns:
+                col_lower = str(col).lower()
+                
+                # Check if this column matches any score pattern
+                if score_col is None and any(pattern in col_lower for pattern in score_patterns):
+                    score_col = col
+                
+                # Check if this column matches any comment pattern
+                if comment_col is None and any(pattern in col_lower for pattern in comment_patterns):
+                    comment_col = col
+            
+            # If we didn't find both columns through pattern matching, use AI-based identification
+            if score_col is None or comment_col is None:
+                # Try up to 3 times to get a valid response from the AI
+                target_columns = ["nps score", "user comment"]
+                max_attempts = 3
+                
+                for attempt in range(max_attempts):
+                    try:
+                        # Send only column information and a textual representation of the data
+                        identified_columns = self._parse_identified_columns(
+                            self.identify_columns(df.head(5), target_columns)
+                        )
+                        
+                        if identified_columns and len(identified_columns) == 2:
+                            score_col = identified_columns[0]
+                            comment_col = identified_columns[1]
+                            break
+                        
+                    except Exception as e:
+                        logger.warning(f"Column identification attempt {attempt+1} failed: {e}")
+                        
+                        # On last attempt, give up but don't raise an exception
+                        if attempt == max_attempts - 1:
+                            break
+            
+            # Final validation that we have both required columns
+            if score_col is None or comment_col is None:
+                missing = []
+                if score_col is None:
+                    missing.append("score")
+                if comment_col is None:
+                    missing.append("comment")
+                return {"error": f"Could not identify {' and '.join(missing)} columns in the file"}
+                
+            # Extract and rename the relevant columns
+            scores_comments_df = df[[score_col, comment_col]].rename(columns={
+                score_col: 'Score',
+                comment_col: 'Comments'
+            })
+
+            # Remove rows with NaN values
             scores_comments_df = scores_comments_df.dropna()
             return scores_comments_df
         except Exception as e:
             logger.error(f"Error reading Excel file: {e}")
-            logger.error("Make sure the provided Excel file contains 'Score' and 'Comments' columns")
-            return None
+            return {"error": str(e)}
+        
+    def identify_columns(self, df: pd.DataFrame, columns: list) -> str:
+        """
+        Use Azure OpenAI to identify which columns in the dataframe match the descriptions.
+        
+        Args:
+            df: DataFrame containing the columns to identify (sample rows)
+            columns: List of column descriptions to match
+            
+        Returns:
+            String response from the AI model
+        """
+        system_prompt = f"""
+        You are an advanced AI system specialized in identifying specific columns within a DataFrame.
+        Given a DataFrame and a target list of column descriptions: {", ".join(columns)},
+        your task is to return a list of the original DataFrame column names that best match these descriptions, in the same order as provided.
+        Return only the matching column names as a Python list literal, like: ["Column1", "Column2"]
+        """
+        
+        try:
+            # Create a safe representation of the DataFrame for JSON serialization
+            sample_data = {}
+            for col in df.columns:
+                # Convert values to strings to avoid JSON serialization issues
+                safe_values = []
+                for val in df[col].head(5).values:
+                    if pd.isna(val):
+                        safe_values.append("NaN")
+                    elif isinstance(val, (int, float)) and (val == float('inf') or val == float('-inf')):
+                        safe_values.append(str(val))
+                    else:
+                        safe_values.append(str(val))
+                sample_data[col] = safe_values
+            
+            response = self.azure_services.azure_openai_client.chat.completions.create(
+                model=self.openai_deployment,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": (
+                        f"Column Names: {list(df.columns)}\n"
+                        f"Sample Data (first {len(sample_data[list(df.columns)[0]])} rows):\n"
+                        f"{sample_data}\n"
+                        f"Target Columns to Identify: {columns}"
+                    )}
+                ]
+            )
+            
+            return response.choices[0].message.content
+        
+        except Exception as e:
+            logger.error(f"Column identification error: {e}")
+            raise
+            
+    def _parse_identified_columns(self, ai_response: str) -> list:
+        """
+        Parse the AI response to extract column names as a proper list.
+        
+        Args:
+            ai_response: String response from the AI model
+            
+        Returns:
+            List of identified column names
+        """
+        try:
+            # Try to extract a Python list from the response
+            # Handle both properly formatted list literals and text descriptions
+            ai_response = ai_response.strip()
+            
+            # Try direct eval if the response looks like a proper Python list
+            if ai_response.startswith('[') and ai_response.endswith(']'):
+                try:
+                    return eval(ai_response)
+                except:
+                    pass
+            
+            # Fall back to regex extraction if eval fails
+            import re
+            column_match = re.findall(r'["\'](.*?)["\']', ai_response)
+            if column_match:
+                return column_match
+            
+            # If no columns were found with the above methods
+            logger.warning(f"Could not parse columns from AI response: {ai_response}")
+            return []
+            
+        except Exception as e:
+            logger.error(f"Error parsing AI response: {e}")
+            return []
+
 
     def calculate_nps_distribution(self, df: pd.DataFrame) -> Tuple[List[Dict], plt.Figure]:
         """
@@ -422,7 +576,8 @@ class AnalysisService:
         insights_df: pd.DataFrame, 
         is_satisfied: bool, 
         plot_title: str, 
-        prompt: str, 
+        prompt: str,
+        customer_type: str, 
         sum_title: Optional[str] = None
     ) -> Tuple[str, plt.Figure]:
         """
@@ -438,6 +593,8 @@ class AnalysisService:
         Returns:
             Tuple of (summary_text, matplotlib_figure)
         """
+        if insights_df.empty: 
+            return (f"You have no {customer_type}.", None)
         # Group insights by category and count occurrences
         block_df = insights_df[insights_df["is_satisfied"] == is_satisfied].groupby("category")["comment_id"].count()
         block_df = block_df.sort_values(ascending=False)
@@ -490,7 +647,11 @@ class AnalysisService:
             logger.error(f"Error generating summary: {e}")
             return f"Error generating summary: {str(e)}", fig
 
-    def generate_positive_summary(self, insights_df: pd.DataFrame) -> Tuple[str, plt.Figure]:
+    def generate_positive_summary(
+            self, 
+            insights_df: pd.DataFrame, 
+            customer_type: str
+        ) -> Tuple[str, plt.Figure]:
         """
         Generate summary of positive feedback.
         
@@ -511,7 +672,8 @@ class AnalysisService:
             is_satisfied=True,
             plot_title="Top 3 reasons why customers would recommend the company",
             prompt=positive_prompt,
-            sum_title="The positive comments say"
+            sum_title="The positive comments say",
+            customer_type=customer_type
         )
     
     def generate_improvement_summary(
@@ -539,7 +701,8 @@ class AnalysisService:
             insights_df=insights_df,
             is_satisfied=False,
             plot_title=f"Top 3 Improvement Areas for {customer_type}",
-            prompt=improvement_prompt
+            prompt=improvement_prompt,
+            customer_type=customer_type
         )
     
     def _format_analysis_results_for_history(self, results: Dict[str, Any]) -> str:
@@ -580,6 +743,7 @@ class AnalysisService:
     
     def fig_to_base64(self, fig):
         """Convert matplotlib figure to base64-encoded string"""
+        if not fig: return None
         buf = io.BytesIO()
         fig.savefig(buf, format='png')
         buf.seek(0)
@@ -647,7 +811,8 @@ class AnalysisService:
 
         # Generate various summaries and visualizations
         # positive_sum, positive_plot = self.generate_positive_summary(insights_df)
-        positive_sum, positive_plot = self.generate_positive_summary(promoter_insights)
+        positive_sum, positive_plot = self.generate_positive_summary(promoter_insights, "Promoters")
+        print("positive_sum ", positive_sum)
         
         # Generate improvement summaries for each category
         # prom_improvement_summary, prom_improvement_plot = self.generate_improvement_summary(

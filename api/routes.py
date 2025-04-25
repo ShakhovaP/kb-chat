@@ -40,34 +40,47 @@ def get_chat_history(session_id: str = Query(None)):
 
 
 @app.post("/kb_upload")
-async def process_pdf(file: UploadFile, url: str):
+async def process_file(file: UploadFile, url: str):
     """
-    Process a PDF file: extract text, structure content, generate embeddings, and store in search.
+    Process PDF, PPTX, or MP4 files: extract content, structure it, generate embeddings, and store in search.
     """
-    if not file.filename.endswith('.pdf'):
-        raise HTTPException(status_code=400, detail="Only PDF files are supported")
+    # Validate file extension
+    if not file.filename.endswith(('.pdf', '.pptx', '.mp4')):
+        return {"error": "Unsupported file format. Please upload PDF, PPTX, or MP4 files only."}
     
-    # Create temporary file to store uploaded PDF
-    with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as temp_file:
+    # Get file extension to determine processing method
+    file_extension = os.path.splitext(file.filename)[1].lower()
+    
+    # Create temporary file with appropriate extension
+    with tempfile.NamedTemporaryFile(delete=False, suffix=file_extension) as temp_file:
         temp_file.write(await file.read())
         temp_file_path = temp_file.name
     
     try:
-        # result = await kb.process_pdf_file(temp_file_path)
-        result = await kb.process_pdf_with_link(temp_file_path, file.filename, url)
+        if file_extension == '.pdf':
+            result = await kb.process_pdf_with_link(temp_file_path, file.filename, url)
+            file_type = "PDF"
+        elif file_extension == '.pptx':
+            result = await kb.process_pptx_with_link(temp_file_path, file.filename, url)
+            file_type = "PPTX"
+        elif file_extension == '.mp4':
+            result = await kb.process_video_with_link(temp_file_path, file.filename, url)
+            file_type = "video"
+        
         return {
-            "message": "PDF processed successfully",
+            "message": f"{file_type} processed successfully",
             "filename": file.filename,
             "document_id": result.get("document_id")
         }
     
     except Exception as e:
-        logger.error(f"Error processing PDF: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error processing PDF: {str(e)}")
+        logger.error(f"Error processing {file_extension} file: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error processing file: {str(e)}")
     
     finally:
         # Clean up temporary file
-        os.unlink(temp_file_path)
+        if os.path.exists(temp_file_path):
+            os.unlink(temp_file_path)
 
 
 @app.get("/kb_search")

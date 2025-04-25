@@ -25,3 +25,7 @@ scikit-learn
 sentence_transformers
 openpyxl
 hf_xet
+moviepy
+azure-cognitiveservices-speech
+azure-search-documents
+Spire.Presentation

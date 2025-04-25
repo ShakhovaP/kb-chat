@@ -4,6 +4,7 @@ from azure.core.credentials import AzureKeyCredential
 from azure.search.documents import SearchClient
 from azure.search.documents.indexes import SearchIndexClient
 from openai import AzureOpenAI
+import azure.cognitiveservices.speech as speechsdk
 
 class AzureServiceClients:
     """
@@ -36,3 +37,4 @@ class AzureServiceClients:
             index_name=config_manager.get_required_env("AZURE_SEARCH_INDEX_NAME"),
             credential=AzureKeyCredential(config_manager.get_required_env("AZURE_AI_SEARCH_API_KEY"))
         )
+        self.speech_config = speechsdk.SpeechConfig(subscription=config_manager.get_required_env("AZURE_SPEECH_KEY"), region=config_manager.get_required_env("AZURE_SPEECH_REGION"))
