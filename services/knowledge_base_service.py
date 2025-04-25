@@ -3,7 +3,7 @@ import time
 import logging
 from typing import List, Dict
 from io import BytesIO
-
+from azure.search.documents.models import VectorizedQuery
 import tiktoken
 from dotenv import load_dotenv
 from PyPDF2 import PdfReader, PdfWriter
@@ -47,6 +47,38 @@ class KnowledgeBaseService:
         self.openai_deployment = self.config_manager.get_required_env("AZURE_OPENAI_GPT_DEPLOYMENT")
         self.openai_embeddings_deployment = self.config_manager.get_required_env("AZURE_OPENAI_EMBEDDING_DEPLOYMENT")
         self.embedding_dimensions = 1536
+
+    async def search(self, query, top_k=5):
+        """
+        Search the knowledge base for relevant content.
+        
+        Args:
+            query_text (str): The search query
+            top_k (int): Number of results to return
+            document_id (str, optional): Limit search to specific document
+            
+        Returns:
+            list: Search results
+        """
+        emb = self.generate_embeddings(query)
+        vector_query = VectorizedQuery(vector=emb, k_nearest_neighbors=top_k, fields="embedding")
+
+        results = self.azure_services.search_client.search(
+            vector_queries=[vector_query],
+            select=['id', 'content'],
+            include_total_count=True,
+        )
+        
+        query_results = []
+        for r in results:
+            query_results.append({
+                'content': r['content'],
+                'score': r['@search.score'] 
+            })
+            print(r['content'])
+
+            
+        return query_results
 
     def extract_text_from_pdf(self, file_path: str) -> List[str]:
         """
