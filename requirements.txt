@@ -13,10 +13,10 @@ uvicorn
 chainlit 
 aiohttp 
 requests
-langchain
-langchain-community
-langchain_openai
-langchain_mongodb
+langchain==0.3.23
+langchain-community==0.3.21
+langchain_openai==0.3.12
+langchain_mongodb==0.6.0
 pymongo
 matplotlib
 pandas
