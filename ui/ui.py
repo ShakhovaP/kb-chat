@@ -192,7 +192,6 @@ async def on_excel_upload(action):
                         
                         Provide 3-5 specific, actionable recommendations to improve customer satisfaction.
                         """
-                        
                         # Call the chat endpoint
                         async with session.post(
                             f"{API_BASE_URL}/chat",
@@ -253,20 +252,40 @@ async def main(message: cl.Message):
                     answer_content = f"{qa_results['answer']}\n\n"
 
                     # Display sources if available
-                    if "sources" in qa_results and qa_results["sources"]:
-                        answer_content += "### Sources:\n\n"
-                        for i, source in enumerate(qa_results["sources"], 1):
-                            answer_content += f"**Source {i}**\n"
-                            if "document_id" in source:
-                                answer_content += f"Document: {source['document_id']}\n"
-                            if "page_number" in source:
-                                answer_content += f"Page: {source['page_number']}\n"
-                            if "content" in source:
-                                answer_content += f"Content: {source['content']}\n\n"
+                    video_url = None
+                    references = "\nReferences:" if len(qa_results['sources'])>0 else ""
+                    count = 1
+                    for source in qa_results['sources'][:5]:
+                        print('source', source)
+                        if '.mp4' in source: 
+                            print("True")
+                            video_url = source
+                            continue
+                        references += f"\n{count}. {source}"
+                        count+=1
+                    # await cl.Message(content=f"**Answer:**\n{answer}").send()
+                        
+                    # if "sources" in qa_results and qa_results["sources"]:
+                    #     answer_content += "### Sources:\n\n"
+                    #     for i, source in enumerate(qa_results["sources"], 1):
+                    #         answer_content += f"**Source {i}**\n"
+                    #         if "document_id" in source:
+                    #             answer_content += f"Document: {source['document_id']}\n"
+                    #         if "page_number" in source:
+                    #             answer_content += f"Page: {source['page_number']}\n"
+                    #         if "content" in source:
+                    #             answer_content += f"Content: {source['content']}\n\n"
 
                     # Remove loading message and send the actual content
                     await msg.remove()
-                    await cl.Message(content=answer_content).send()
+                    # await cl.Message(content=answer_content).send()
+                    elements = [
+                        cl.Video(url=video_url, display="inline"),
+                    ] if video_url else None
+                    await cl.Message(
+                        content=answer_content + references,
+                        elements=elements,
+                    ).send()
 
                 else:
                     error_text = await response.text()

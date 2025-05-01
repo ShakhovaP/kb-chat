@@ -15,6 +15,7 @@ from langchain_mongodb import MongoDBChatMessageHistory
 
 from services.config_manager import ConfigManager
 from services.azure_service import AzureServiceClients
+import time
 
 logging.basicConfig(
     level=logging.INFO,
@@ -24,18 +25,17 @@ logger = logging.getLogger(__name__)
 
 class AnalysisService:
     """Service for analyzing customer feedback and generating insights."""
-
-    # Predefined categories for customer feedback insights
-    PREDEFINED_TOPICS = [
-        "turnaround time", 
-        "technical expertise", 
-        "quality of communication", 
-        "responsiveness",
-        "reliability",
-    ]
     
     def __init__(self):
         """Initialize the analysis service with required dependencies."""
+        self.PREDEFINED_TOPICS = [
+            "turnaround time", 
+            "technical expertise", 
+            "quality of communication", 
+            "responsiveness",
+            "reliability",
+        ]
+
         self.config_manager = ConfigManager()
         self.azure_services = AzureServiceClients(self.config_manager)
         self.openai_deployment = self.config_manager.get_required_env("AZURE_OPENAI_GPT_DEPLOYMENT")
@@ -44,6 +44,9 @@ class AnalysisService:
         # Initialize NLP models
         self.sentence_model = SentenceTransformer('all-MiniLM-L6-v2')
         self.bertopic_model = BERTopic(embedding_model=self.sentence_model, calculate_probabilities=True)
+
+        self.generated_topics = []
+        self.speed_list = []
 
     def read_excel(self, file_path: str) -> pd.DataFrame | dict:
         """
@@ -124,7 +127,8 @@ class AnalysisService:
             })
 
             # Remove rows with NaN values
-            scores_comments_df = scores_comments_df.dropna()
+            # scores_comments_df = scores_comments_df.dropna()
+            scores_comments_df = scores_comments_df.dropna(subset=['Score', 'Comments'], how='all')
             return scores_comments_df
         except Exception as e:
             logger.error(f"Error reading Excel file: {e}")
@@ -383,8 +387,10 @@ class AnalysisService:
             Tuple of (topic_name, is_new_topic)
         """
         # Encode the insight and predefined topics
+        topics_list = self.PREDEFINED_TOPICS + self.generated_topics
         insight_embedding = self.sentence_model.encode([insight_text])[0]
-        topics_embeddings = self.sentence_model.encode(self.PREDEFINED_TOPICS)
+        topics_embeddings = self.sentence_model.encode(topics_list)
+        # topics_embeddings = self.sentence_model.encode(self.PREDEFINED_TOPICS)
         
         # Calculate cosine similarity
         similarities = cosine_similarity([insight_embedding], topics_embeddings)[0]
@@ -394,7 +400,8 @@ class AnalysisService:
         max_similarity = similarities[max_similarity_index]
         
         if max_similarity >= similarity_threshold:
-            return self.PREDEFINED_TOPICS[max_similarity_index], False
+            # return self.PREDEFINED_TOPICS[max_similarity_index], False
+            return topics_list[max_similarity_index], False
         else:
             # Generate new topic with OpenAI
             return self._generate_new_topic(insight_text)
@@ -432,6 +439,7 @@ class AnalysisService:
                 
                 new_topic = response.choices[0].message.content
                 if new_topic:
+                    self.generated_topics.append(new_topic.strip().strip('"'))
                     return new_topic.strip().strip('"'), True
             
             # Fallback if response doesn't have expected structure
@@ -458,6 +466,7 @@ class AnalysisService:
         all_insights_text = []
         comments_insights_map = []
 
+        insights_extraction_start = time.time()
         def process_predefined(comment):
             splited_comment = comment.split(", ")
             print("splited_comment", splited_comment)
@@ -485,11 +494,22 @@ class AnalysisService:
                         "insight": insight["insight"],
                         "isSatisfied": insight["isSatisfied"]
                     })
-        
-        # Train BERTopic model on all insights if we have enough data
+        insights_extraction_end = time.time()
+        self.speed_list.append({
+            "script": "extract insights from comments using OpenAI",
+            "time_to_exec": insights_extraction_end - insights_extraction_start
+        })
+
+        # BERTopic model 
+        bertopic_categorisation_start = time.time()
         topics = None
         if len(all_insights_text) >= 2:  # BERTopic needs at least 2 documents
             topics, _ = self.bertopic_model.fit_transform(all_insights_text)
+        bertopic_categorisation_end = time.time()
+        self.speed_list.append({
+            "script": "categorise using BERTopic",
+            "time_to_exec": bertopic_categorisation_end - bertopic_categorisation_start
+        })
         
         print("comments_insights_map", comments_insights_map)
         # Process each comment with its insights
@@ -497,6 +517,7 @@ class AnalysisService:
         current_comment = None
         comment_results = []
         
+        topic_determination_start = time.time()
         for item in comments_insights_map:
             comment = item["comment"]
             insight_text = item["insight"]
@@ -538,6 +559,11 @@ class AnalysisService:
             })
             
             insight_index += 1
+        topic_determination_end = time.time()
+        self.speed_list.append({
+            "script": "determine topics with OpenAI",
+            "time_to_exec": topic_determination_end - topic_determination_start
+        })
         
         # Add the last comment
         if current_comment is not None:
@@ -776,13 +802,22 @@ class AnalysisService:
             message_history.add_user_message("analyze excel")
             message_history.add_ai_message(error_msg)  # Using string, not dict
             return {"error": error_msg}
-
+        rows_count = len(df)
+        # comments_count = len(df[df['Comments'].astype(str) != "NaN"])
+        comments_count = df['Comments'].notna().sum()
         # Calculate NPS distribution
+        nps_distribution_start = time.time()
         nps_obj, nps_plot = self.calculate_nps_distribution(df)
+        nps_distribution_end = time.time()
+        self.speed_list.append({
+            "script": "calculate nps distribution",
+            "time_to_exec": nps_distribution_end - nps_distribution_start
+        })
         
         # Load test data from file
         try:
-            comments_list = list(df['Comments'])
+            # comments_list = list(df['Comments'])
+            comments_list = list(df['Comments'].dropna())
             data = self.process_customer_comments(comments_list, message_history)
         except Exception as e:
             error_msg = f"Error loading test data: {str(e)}"
@@ -804,6 +839,7 @@ class AnalysisService:
         
         insights_df['score'] = insights_df.apply(get_score, axis=1)
         
+        analysis_generation_start = time.time()
         # Split insights by NPS category
         promoter_insights = insights_df[insights_df["score"] >= 9]
         detractor_insights = insights_df[insights_df["score"] <= 6]
@@ -824,6 +860,13 @@ class AnalysisService:
         pasv_improvement_summary, pasv_improvement_plot = self.generate_improvement_summary(
             passive_insights, "Passives"
         )
+        analysis_generation_end = time.time()
+        self.speed_list.append({
+            "script": "generate analysis",
+            "time_to_exec": analysis_generation_end - analysis_generation_start
+        })
+        speed_df = pd.DataFrame(self.speed_list)
+        # speed_df.to_csv(f"exec_time_for_{rows_count}_rows_{comments_count}_comm.csv")
 
         # Compile analysis results
         analysis_results = {

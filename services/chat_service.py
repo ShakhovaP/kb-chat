@@ -1,17 +1,23 @@
 import logging
 from typing import Dict
 from dotenv import load_dotenv
-from langchain_openai import AzureChatOpenAI
+from langchain_openai import AzureChatOpenAI, AzureOpenAIEmbeddings
 from langchain_mongodb import MongoDBChatMessageHistory
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain.chains import (
-    create_history_aware_retriever,
+    # create_history_aware_retriever,
     create_retrieval_chain
+    # history_aware_retriever,
+    # retrieval_chain
 )
+# from langchain.chains.retrieval import create_retrieval_chain
+from langchain.chains.history_aware_retriever import create_history_aware_retriever
 from langchain.chains.combine_documents import create_stuff_documents_chain
 from langchain_community.retrievers import AzureAISearchRetriever
 from services.config_manager import ConfigManager
 from services.azure_service import AzureServiceClients
+from langchain_community.vectorstores import AzureSearch
+
 
 # Configure logging and environment variables
 load_dotenv()
@@ -68,7 +74,6 @@ class ChatService:
                 connection_string=self.mongodb_uri, 
                 session_id=session_id
             )
-            print('message_history', message_history)
 
             contextualize_q_system_prompt = (
                 """
@@ -99,12 +104,13 @@ class ChatService:
                 doc_id = doc.metadata.get('id', 'unknown_id')
                 doc_url = doc.metadata.get('file_url', '')
                 score = doc.metadata.get('@search.score', 'N/A')  # Get score from metadata if available
-                if float(score)>35: document_info.append((doc_url, score))
-            references = "\nReferences:" if len(document_info)>0 else ""
-            for i, (doc_url, score) in enumerate(document_info[:3]):
-                # references += f"\n{i}. {doc_url} (relevance score: {score})"
-                references += f"\n{i+1}. {doc_url}"
-
+                # print("score", doc.metadata.get('@search.score', 'N/A'))
+                # if float(score)>0: document_info.append((doc_url, score))
+                if float(score)>0: document_info.append(doc_url)
+            # references = "\nReferences:" if len(document_info)>0 else ""
+            # for i, (doc_url, score) in enumerate(document_info[:3]):
+            #     # references += f"\n{i}. {doc_url} (relevance score: {score})"
+            #     references += f"\n{i+1}. {doc_url}"
             # Answer question
             qa_system_prompt = (
                 """You are a helpful assistant that answers questions based on the provided pieces of retrieved context. When responding:
@@ -131,13 +137,15 @@ class ChatService:
             )
 
             response = rag_chain.invoke({"input": query, "chat_history": message_history.messages})
-
             self.logger.info("response", response)
             message_history.add_user_message(query)
-            message_history.add_ai_message(response['answer'] + references)
+            # message_history.add_ai_message(response['answer'] + references)
+            message_history.add_ai_message(response['answer'])
             return {
                 "question": query,
-                "answer": response['answer'] + references
+                # "answer": response['answer'] + references
+                "sources": document_info,
+                "answer": response['answer']
             }
         
         except Exception as e:

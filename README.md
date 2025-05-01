@@ -117,16 +117,23 @@ After accessing the application, you can start interacting with the chatbot. The
 The application provides an endpoint to enrich the chatbot's knowledge base by uploading documents.​
 
 #### Uploading Documents
-1. Access the Swagger UI
+1. Get URL to your document
+You need a public URL pointing to the document you want to upload. You can obtain this URL in one of the following ways:
+
+**Option 1**: Upload your file to Azure Blob Storage and generate a public (or shared access) link to the uploaded file.
+
+**Option 2**: Use a URL from another accessible source, such as a YouTube video link, a publicly shared Google Drive or Dropbox file, or a direct link to a document hosted on a website.
+
+2. Access the Swagger UI
 Navigate to http://localhost:8000/docs to access the Swagger UI.
 
-2. Locate the /kb-upload Endpoint
+3. Locate the /kb-upload Endpoint
 In the Swagger UI, find the POST /kb-upload endpoint.
 
-3. Upload a Document
+4. Upload a Document
 Click on the endpoint to expand it, then click "Try it out". Use the file upload field to select and upload your document and url field to provide the corresponding URL to your file. Supported formats may include, .pdf, .pptx, .mp4 etc.
 
-4. Submit the Request
+5. Submit the Request
 Click "Execute" to send the request. The document will be processed and added to the knowledge base.
 
 ## 🧰 Services Overview
@@ -146,3 +153,21 @@ Provides configuration management capabilities. This service likely handles the 
 
 #### 📚 knowledge_base_service.py
 Manages the knowledge base that the chatbot uses to generate responses. This includes functionalities for querying the knowledge base, updating content, handling document uploads.
+
+
+## Azure Architecture Resources
+| Resource Name | Resource Type | Purpose |
+|----------------------------------|----------------------------------------------|-----------------------------------------------------------------------------------------------------------------|
+| **DocumentDataExtractor**  | Azure AI Document Intelligence (Cognitive Service) | Extracts structured text/tables from documents (OCR) for downstream processing | 
+| **kb-speech-to-text**  | Azure Cog | Transcrib put into text (e.g. for voice queries or audio data) | 
+| **OpenAIDataProcessor** | Azure Cognitive Services (Azure OpenAI Service) | Runs OpenAI model inference (e.g. summarization or generation) on data. | 
+| **pip-vw-front** | Azure Public IP Address | Public IP for inbound traffic to the VMSS and other resources. |
+| **cv-vnet** | Virtual Network | Private network for all resources (isolates traffic, enables secure comms)| 
+| **rv-bastion** | Azure Bastion | Provides secure RDP/SSH access to VMs over TLS without public IPs.|
+| **nw-nsg** | Network Security Group| Applies allow/deny rules to filter network traffic in the VNet. | 
+| **rv-net-ip** | Azure Public IP Address | Public IP for Azure Bastion (and NSG) to enable RDP/SSH access. |
+| **rw-chat-dev-db** | Azure Cosmos DB (MongoDB API) | Globally distributed NoSQL DB storing chat and nps data |
+| **index-search-demo** | Azure AI Search (Cognitive Search) | Search index for testing and development (enables text and vector search) |
+| **kb-index-search** | Azure AI Search (Cognitive Search) | Basic search index (production) for knowledge-base queries. | 
+
+![Azure diagram](./img/Azure_resourse_scheme.jpg)

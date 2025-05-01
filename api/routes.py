@@ -10,6 +10,7 @@ from services.analysis_service import AnalysisService
 from pydantic import BaseModel
 from typing import Dict, List, Optional
 import uuid
+from fastapi.middleware.cors import CORSMiddleware
 
 logging.basicConfig(
     level=logging.INFO,
@@ -22,6 +23,13 @@ kb = KnowledgeBaseService()
 chat = ChatService()
 analysis = AnalysisService()
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # or set specific domains
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 class ConversationRequest(BaseModel):
     query: str
     session_id: str
