@@ -7,6 +7,7 @@ import json
 from bson import ObjectId
 import matplotlib.pyplot as plt
 import asyncio
+from urllib.parse import urlparse, quote
 
 
 # Configuration
@@ -261,21 +262,36 @@ async def main(message: cl.Message):
                             print("True")
                             video_url = source
                             continue
-                        references += f"\n{count}. {source}"
-                        count+=1
-                    # await cl.Message(content=f"**Answer:**\n{answer}").send()
+                        parsed_url = urlparse(source)
+                        domain = parsed_url.netloc
+                        path = parsed_url.path
                         
-                    # if "sources" in qa_results and qa_results["sources"]:
-                    #     answer_content += "### Sources:\n\n"
-                    #     for i, source in enumerate(qa_results["sources"], 1):
-                    #         answer_content += f"**Source {i}**\n"
-                    #         if "document_id" in source:
-                    #             answer_content += f"Document: {source['document_id']}\n"
-                    #         if "page_number" in source:
-                    #             answer_content += f"Page: {source['page_number']}\n"
-                    #         if "content" in source:
-                    #             answer_content += f"Content: {source['content']}\n\n"
-
+                        # Create a more descriptive text for the link
+                        source_name = f"Document from {domain}"
+                        if path and path != '/':
+                            filename = path.rstrip('/').split('/')[-1]
+                            clean_filename = filename.replace('-', ' ').replace('_', ' ')
+                            if clean_filename:
+                                # source_name = f"{clean_filename} ({domain})"
+                                source_name = f"{clean_filename}"
+                        
+                        # Properly encode the URL - ensure spaces are encoded as %20
+                        # Reconstruct the URL with proper encoding
+                        encoded_path = quote(path)
+                        scheme = parsed_url.scheme
+                        query = parsed_url.query
+                        fragment = parsed_url.fragment
+                        
+                        # Rebuild the URL with encoded components
+                        encoded_url = f"{scheme}://{domain}{encoded_path}"
+                        if query:
+                            encoded_url += f"?{quote(query)}"
+                        if fragment:
+                            encoded_url += f"#{quote(fragment)}"
+                        
+                        # Add formatted reference as Markdown link with properly encoded URL
+                        references += f"\n{count}. [{source_name}]({encoded_url})"
+                        count+=1
                     # Remove loading message and send the actual content
                     await msg.remove()
                     # await cl.Message(content=answer_content).send()

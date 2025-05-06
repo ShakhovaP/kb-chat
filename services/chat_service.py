@@ -144,7 +144,7 @@ class ChatService:
             return {
                 "question": query,
                 # "answer": response['answer'] + references
-                "sources": document_info,
+                "sources": set(document_info),
                 "answer": response['answer']
             }
         

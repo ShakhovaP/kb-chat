@@ -145,8 +145,38 @@ class KnowledgeBaseService:
                 audio_config=audio_config
             )
             
-            speech_recognition_result = speech_recognizer.recognize_once_async().get()
-            return speech_recognition_result.text
+            # For collecting the complete transcription
+            all_results = []
+            
+            # Set up event handlers for continuous recognition
+            done = False
+            def handle_final_result(evt):
+                if evt.result.reason == speechsdk.ResultReason.RecognizedSpeech:
+                    all_results.append(evt.result.text)
+            
+            def stop_callback(evt):
+                nonlocal done
+                done = True
+            
+            # Connect the event handlers
+            speech_recognizer.recognized.connect(handle_final_result)
+            speech_recognizer.session_stopped.connect(stop_callback)
+            speech_recognizer.canceled.connect(stop_callback)
+            
+            # Start continuous recognition
+            speech_recognizer.start_continuous_recognition()
+            
+            # Wait for recognition to complete
+            while not done:
+                time.sleep(0.5)
+                
+            # Stop recognition
+            speech_recognizer.stop_continuous_recognition()
+            
+            # Combine all results
+            complete_transcription = ' '.join(all_results)
+            
+            return complete_transcription
         finally:
             # Clean up temporary file
             if temp_audio_path and os.path.exists(temp_audio_path):
@@ -278,7 +308,7 @@ class KnowledgeBaseService:
             self.logger.error(f"PDF processing error: {str(e)}")
             raise
 
-    async def process_video_with_link(self, file_path: str, file_name: str, url: str) -> Dict[str, str]:
+    async def process_video_with_link(self, file_path: str, file_name: str, url: str, speech_language: str | None) -> Dict[str, str]:
         """
         Process a video file through the entire pipeline.
         
@@ -288,6 +318,7 @@ class KnowledgeBaseService:
         try:
 
             speech_config = self.azure_services.speech_config
+            if speech_language: speech_config.speech_recognition_language=speech_language
             transcription = self.process_speech(file_path, speech_config)
 
             file_name = os.path.basename(file_path).replace(".mp4", "")

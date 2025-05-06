@@ -11,6 +11,7 @@ from pydantic import BaseModel
 from typing import Dict, List, Optional
 import uuid
 from fastapi.middleware.cors import CORSMiddleware
+from enum import Enum
 
 logging.basicConfig(
     level=logging.INFO,
@@ -30,6 +31,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+class SpeechLanguage(str, Enum):
+    DANISH = "da-DK"
+    ENGLISH_US = "en-US"
+    
 class ConversationRequest(BaseModel):
     query: str
     session_id: str
@@ -48,7 +54,13 @@ def get_chat_history(session_id: str = Query(None)):
 
 
 @app.post("/kb_upload")
-async def process_file(file: UploadFile, url: str):
+async def process_file(
+    file: UploadFile, 
+    url: str,
+    speech_language: Optional[SpeechLanguage] = Query(
+        default=None,
+        description="BCP-47 language code for speech recognition"
+    )):
     """
     Process PDF, PPTX, or MP4 files: extract content, structure it, generate embeddings, and store in search.
     """
@@ -72,7 +84,7 @@ async def process_file(file: UploadFile, url: str):
             result = await kb.process_pptx_with_link(temp_file_path, file.filename, url)
             file_type = "PPTX"
         elif file_extension == '.mp4':
-            result = await kb.process_video_with_link(temp_file_path, file.filename, url)
+            result = await kb.process_video_with_link(temp_file_path, file.filename, url, speech_language)
             file_type = "video"
         
         return {
