@@ -142,7 +142,7 @@ async def process_excel(file: UploadFile, session_id: str = Query(...)):
         temp_file_path = temp_file.name
     
     try:
-        analysis_results = await analysis.analyze_document(temp_file_path, session_id)        
+        analysis_results = analysis.analyze_document(temp_file_path, session_id)        
         return analysis_results
     
     except Exception as e:
