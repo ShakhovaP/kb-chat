@@ -226,6 +226,62 @@ async def on_excel_upload(action):
         await cl.Message(content=f"⚠️ Error uploading Excel file: {str(e)}").send()
         await create_excel_upload_button()
 
+def extract_media_urls(sources: list, max_sources: int = 5):
+    """
+    Args:
+        sources: List of source URLs
+        max_sources: Maximum number of sources to process
+        
+    Returns:
+        tuple: (video_url, pptx_url, pptx_name)
+    """
+    video_url = None
+    pptx_url = None
+    pptx_name = "Power Point"
+    
+    for source in sources[:max_sources]:
+        if '.mp4' in source:
+            video_url = source
+        elif '.pptx' in source:
+            pptx_url = source
+            
+            # Extract a readable name for the PowerPoint file
+            parsed_url = urlparse(source)
+            path = parsed_url.path
+            
+            if path and path != '/':
+                filename = path.rstrip('/').split('/')[-1]
+                clean_filename = filename.replace('-', ' ').replace('_', ' ')
+                if clean_filename:
+                    pptx_name = clean_filename
+    
+    return video_url, pptx_url, pptx_name
+
+
+def create_message_elements(video_url: str = None, pptx_url: str = None, pptx_name: str = None):
+    """
+    Args:
+        video_url: URL to a video file
+        pptx_url: URL to a PowerPoint file
+        pptx_name: Display name for the PowerPoint file
+        
+    Returns:
+        list: List of UI elements to display
+    """
+    elements = []
+    
+    if video_url:
+        elements.append(cl.Video(url=video_url, display="inline"))
+    
+    if pptx_url:
+        elements.append(cl.File(
+            name=pptx_name,
+            url=pptx_url,
+            display="inline"
+        ))
+    
+    return elements if elements else None
+
 @cl.on_message
 async def main(message: cl.Message):
     """Handle user messages and maintain chat history."""
@@ -253,53 +309,16 @@ async def main(message: cl.Message):
                     answer_content = f"{qa_results['answer']}\n\n"
 
                     # Display sources if available
-                    video_url = None
-                    references = "\nReferences:" if len(qa_results['sources'])>0 else ""
-                    count = 1
-                    for source in qa_results['sources'][:5]:
-                        print('source', source)
-                        if '.mp4' in source: 
-                            print("True")
-                            video_url = source
-                            continue
-                        parsed_url = urlparse(source)
-                        domain = parsed_url.netloc
-                        path = parsed_url.path
-                        
-                        # Create a more descriptive text for the link
-                        source_name = f"Document from {domain}"
-                        if path and path != '/':
-                            filename = path.rstrip('/').split('/')[-1]
-                            clean_filename = filename.replace('-', ' ').replace('_', ' ')
-                            if clean_filename:
-                                # source_name = f"{clean_filename} ({domain})"
-                                source_name = f"{clean_filename}"
-                        
-                        # Properly encode the URL - ensure spaces are encoded as %20
-                        # Reconstruct the URL with proper encoding
-                        encoded_path = quote(path)
-                        scheme = parsed_url.scheme
-                        query = parsed_url.query
-                        fragment = parsed_url.fragment
-                        
-                        # Rebuild the URL with encoded components
-                        encoded_url = f"{scheme}://{domain}{encoded_path}"
-                        if query:
-                            encoded_url += f"?{quote(query)}"
-                        if fragment:
-                            encoded_url += f"#{quote(fragment)}"
-                        
-                        # Add formatted reference as Markdown link with properly encoded URL
-                        references += f"\n{count}. [{source_name}]({encoded_url})"
-                        count+=1
+                    # Extract media URLs from sources
+                    video_url, pptx_url, pptx_name = extract_media_urls(qa_results['sources'])
+                    
+                    # Create UI elements for the response
+                    elements = create_message_elements(video_url, pptx_url, pptx_name)
+                    
                     # Remove loading message and send the actual content
                     await msg.remove()
-                    # await cl.Message(content=answer_content).send()
-                    elements = [
-                        cl.Video(url=video_url, display="inline"),
-                    ] if video_url else None
                     await cl.Message(
-                        content=answer_content + references,
+                        content=answer_content,
                         elements=elements,
                     ).send()
 
