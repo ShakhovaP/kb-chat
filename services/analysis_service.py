@@ -333,8 +333,7 @@ class AnalysisService:
         Your task is to extract distinct and concise insights from the comment. 
         For each insight, determine whether the customer is satisfied or not.
 
-        Guidelines:
-        1. Use the original language of the comment when writing insights.
+        1. You MUST write insights in the same language used in the input comment (e.g., Danish, etc.).
         2. Format your response as a JSON array of objects, where each object has:
          - "insight": brief, unique summary (max 10 words)
          - "isSatisfied": 
@@ -436,7 +435,7 @@ class AnalysisService:
 
         Instructions:
         1. The topic should be a broad category, not a repetition of the full insight.
-        2. Use the same language as the original insight.
+        2. You MUST write your response in the same language used in the original insight (e.g., Danish, etc.).
         3. Keep the title between 2 to 4 words, avoiding unnecessary details.
         """
         
@@ -709,7 +708,8 @@ class AnalysisService:
             that highlights the key strengths of the service, based on these insights.
 
             Instructions:
-            1. Use the same language as the insights.
+            1. You MUST write your response in the same language used in the insights(e.g., Danish, etc.). 
+                Do NOT switch to English, unless all insights themselves are written in English.
             2. Structure the summary into several short paragraphs to enhance readability.
             3. Do not include any metadata, bullet points, or explanations—just the paragraph.
         """
@@ -718,7 +718,7 @@ class AnalysisService:
             is_satisfied=True,
             plot_title="Top 3 reasons why customers would recommend the company",
             prompt=positive_prompt,
-            sum_title="The positive comments say",
+            # sum_title="The positive comments say",
             customer_type=customer_type
         )
     
@@ -743,7 +743,8 @@ class AnalysisService:
             that highlights the areas needing improvement, based on these insights.
 
             Instructions:
-            1. Use the same language as the insights.
+            1. You MUST write your response in the same language used in the insights(e.g., Danish, etc.). 
+                Do NOT switch to English, unless all insights themselves are written in English.
             2. Structure the summary into several short paragraphs to enhance readability.
             3. Do not include any metadata, bullet points, or explanations—just the paragraph.
         """

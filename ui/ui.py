@@ -178,7 +178,7 @@ async def on_excel_upload(action):
 
                         # Prepare a detailed query for the chat endpoint
                         recommendation_query = f"""
-                        Based on the following NPS analysis, provide specific recommendations:
+                        Based on the following NPS analysis, provide specific recommendations  to improve customer satisfaction:
                         
                         NPS Score: {result.get('nps_score', 'N/A')}
                         
@@ -192,8 +192,11 @@ async def on_excel_upload(action):
                         {result["detract_summary"]}
                         
                         Instructions:
-                        1. Provide 3-5 specific, actionable recommendations to improve customer satisfaction.
-                        2. Use the same language (e.g., Danish etc.) as used in the summaries above.
+                        1. Provide 3–5 specific, actionable recommendations based on the summaries above.
+                        2. Detect the language of the summaries automatically and use it throughout your response.
+                        3. You MUST write your response in the same language used in the summaries above (e.g., Danish, etc.). 
+                        Do NOT switch to English, unless all summaries themselves are written in English.
+                        4. Focus on improving customer satisfaction by addressing themes mentioned in each category.
                         """
                         # Call the chat endpoint
                         async with session.post(
