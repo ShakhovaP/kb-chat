@@ -328,12 +328,18 @@ class AnalysisService:
             List of insights with satisfaction indicators
         """
         prompt = f"""
-        Analyze the following customer comment about service improvements:
+        Given a customer comment about service improvements:
         "{comment}"
-        Extract unique short insights from this comment. For each insight, determine whether the customer is satisfied or not.
-        Format your response as a JSON array of objects, where each object has:
-        1. "insight": a concise statement of the unique insight (max 10 words)
-        2. "isSatisfied": true if the customer is satisfied with this aspect, false if not
+        Your task is to extract distinct and concise insights from the comment. 
+        For each insight, determine whether the customer is satisfied or not.
+
+        Guidelines:
+        1. Use the original language of the comment when writing insights.
+        2. Format your response as a JSON array of objects, where each object has:
+         - "insight": brief, unique summary (max 10 words)
+         - "isSatisfied": 
+                - true if the customer is clearly positive about the aspect
+                - false if the customer expresses dissatisfaction, complaint, or frustration.
         
         Example format:
         [
@@ -418,10 +424,20 @@ class AnalysisService:
         """
         prompt = f"""
         Create a short, concise topic title (2-4 words) for the following customer feedback insight:
-        
-        "{insight_text}"
-        
+        "{insight_text}".
+        Make sure to save the language of the insight.
         The topic should be a general category that this insight falls under.
+
+        Given a customer feedback insight:
+        "{insight_text}"
+
+        Your task is to generate a short and concise topic title 
+        that represents the general category this insight belongs to.
+
+        Instructions:
+        1. The topic should be a broad category, not a repetition of the full insight.
+        2. Use the same language as the original insight.
+        3. Keep the title between 2 to 4 words, avoiding unnecessary details.
         """
         
         try:
@@ -689,9 +705,13 @@ class AnalysisService:
         """
         positive_prompt = """
             Given the list of positive customer insights about the service.
-            Your task is to create a short and concrise professional summary 
-            highlighting the key strengths of the service.
-            Return output as a single paragraph without any additional explanations or metadata.
+            Your task is to generate a short and concise, professional summary 
+            that highlights the key strengths of the service, based on these insights.
+
+            Instructions:
+            1. Use the same language as the insights.
+            2. Structure the summary into several short paragraphs to enhance readability.
+            3. Do not include any metadata, bullet points, or explanations—just the paragraph.
         """
         return self.generate_summary_with_plot(
             insights_df=insights_df,
@@ -719,9 +739,13 @@ class AnalysisService:
         """
         improvement_prompt = """
             Given the list of negative customer insights about the service.
-            Your task is to create a short and concrise professional summary
-            highlighting the areas needing improvement.
-            Return output as a single paragraph without any additional explanations or metadata.
+            Your task is to generate a short and concise, professional summary 
+            that highlights the areas needing improvement, based on these insights.
+
+            Instructions:
+            1. Use the same language as the insights.
+            2. Structure the summary into several short paragraphs to enhance readability.
+            3. Do not include any metadata, bullet points, or explanations—just the paragraph.
         """
         return self.generate_summary_with_plot(
             insights_df=insights_df,

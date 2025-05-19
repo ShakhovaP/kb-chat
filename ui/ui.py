@@ -13,7 +13,7 @@ from urllib.parse import urlparse, quote
 # Configuration
 # API_BASE_URL = "http://localhost:8000"
 API_BASE_URL = "http://fastapi-backend:8000"
-
+print(dir(cl))
 
 @cl.on_chat_start
 async def start():
@@ -191,7 +191,9 @@ async def on_excel_upload(action):
                         Detractors ({nps_categories[2]['percentage']:.1f}%): 
                         {result["detract_summary"]}
                         
-                        Provide 3-5 specific, actionable recommendations to improve customer satisfaction.
+                        Instructions:
+                        1. Provide 3-5 specific, actionable recommendations to improve customer satisfaction.
+                        2. Use the same language (e.g., Danish etc.) as used in the summaries above.
                         """
                         # Call the chat endpoint
                         async with session.post(
@@ -210,7 +212,7 @@ async def on_excel_upload(action):
                             else:
                                 await cl.Message(content="⚠️ Could not generate recommendations from knowledge base.").send()
 
-                        await cl.Message(content="You can now ask questions about this NPS data!").send()
+                        # await cl.Message(content="You can now ask questions about this NPS data!").send()
                         
                     else:
                         error_text = await response.text()
