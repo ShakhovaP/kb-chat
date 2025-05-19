@@ -133,7 +133,7 @@ async def on_excel_upload(action):
                         #     elements=pos_plot,
                         # ).send()
                         pos_summary = f"""
-                        # Customer Satisfaction Insights
+                        # Customer loyalty insights
                         {result["positive_summary"]}
                         """
                         await cl.Message(
