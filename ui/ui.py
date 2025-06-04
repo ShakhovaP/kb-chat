@@ -93,19 +93,19 @@ async def on_excel_upload(action):
                         # Display NPS analysis results
                         nps_categories = result["nps_categories"]
                         total_responses = sum([c["number"] for c in nps_categories])
-                        
-                        nps_body =f"""
-                        Distribution:
-                        - {nps_categories[0]['name']} (9-10): {nps_categories[0]['percentage']:.1f}% ({nps_categories[0]['number']} responses)
-                        - {nps_categories[1]['name']} (7-8): {nps_categories[1]['percentage']:.1f}% ({nps_categories[1]['number']} responses)
-                        - {nps_categories[2]['name']} (0-6): {nps_categories[2]['percentage']:.1f}% ({nps_categories[2]['number']} responses)
-                        """
-                        nps_summary = f"""
-                        # NPS Analysis Results
-                        {nps_body}
-                        """
+                        overall_nps = result["nps_score"]
 
-                        await cl.Message(content=nps_summary).send()
+                        table_markdown = (
+                            "| Category | Score Range | Count | Percentage |\n"
+                            "|----------|-------------|-------|------------|\n"
+                            f"| **{nps_categories[0]['name']}** | 9-10 | {nps_categories[0]['number']} | {nps_categories[0]['percentage']:.1f}% |\n"
+                            f"| **{nps_categories[1]['name']}** | 7-8 | {nps_categories[1]['number']} | {nps_categories[1]['percentage']:.1f}% |\n"
+                            f"| **{nps_categories[2]['name']}** | 0-6 | {nps_categories[2]['number']} | {nps_categories[2]['percentage']:.1f}% |\n"
+                            f"| **Total** | - | **{total_responses}** | **100.0%** |"
+                        )
+                        content = "# NPS Analysis Result\n" + table_markdown + f"\n**Overall NPS for {total_responses} uploaded respondents = {overall_nps:.1f}**"
+                        await cl.Message(content=content).send()
+
 
                         # Display the NPS plot from base64 data
                         nps_plot = [
@@ -216,6 +216,10 @@ async def on_excel_upload(action):
                                 await cl.Message(content="⚠️ Could not generate recommendations from knowledge base.").send()
 
                         # await cl.Message(content="You can now ask questions about this NPS data!").send()
+                        await cl.Message(content="✅ NPS analysis complete! You can now ask questions about this data or upload another file.").send()
+                        
+                        # Clear the user session of any blocking states
+                        cl.user_session.set("processing", False)
                         
                     else:
                         error_text = await response.text()
@@ -326,6 +330,7 @@ async def main(message: cl.Message):
                         content=answer_content,
                         elements=elements,
                     ).send()
+                    return
 
                 else:
                     error_text = await response.text()

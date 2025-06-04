@@ -115,8 +115,8 @@ class ChatService:
             qa_system_prompt = (
                 """You are a helpful assistant that answers questions based on the provided pieces of retrieved context. When responding:
                 1. Present the answer in two parts:
-                - Results: A short text summary.
-                - Key Takeaways: 3 concise bullet points highlighting the most important insights.
+                - **Results**: A short text summary.
+                - **Key Takeaways**: 3 concise bullet points highlighting the most important insights.
                 2. If possible, highlight specific examples of Danish companies mentioned in the retrieved documents.
                 - Do NOT mention if such examples are missing.
                 3. If the context doesn't contain relevant information, provide a general response based on your knowledge.

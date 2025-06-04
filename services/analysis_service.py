@@ -238,6 +238,7 @@ class AnalysisService:
         n_promoters = df[df["Score"] >= 9].shape[0]
         n_passives = n_total - n_promoters - n_detractors
         
+        nps_score = (n_promoters/n_total - n_detractors/n_total) * 100
         categories = [
             {
                 "name": "Promoters",
@@ -315,7 +316,7 @@ class AnalysisService:
         # Ensure the plot is tight and there's no wasted space
         plt.tight_layout()
         
-        return categories, fig
+        return nps_score, categories, fig
 
     def extract_insights(self, comment: str) -> List[Dict]:
         """
@@ -422,21 +423,16 @@ class AnalysisService:
             Tuple of (topic_name, is_new_topic=True)
         """
         prompt = f"""
-        Create a short, concise topic title (2-4 words) for the following customer feedback insight:
-        "{insight_text}".
-        Make sure to save the language of the insight.
-        The topic should be a general category that this insight falls under.
+            Given a customer feedback insight:
+            "{insight_text}"
 
-        Given a customer feedback insight:
-        "{insight_text}"
+            Your task is to generate a short and concise topic title 
+            that represents the general category this insight belongs to.
 
-        Your task is to generate a short and concise topic title 
-        that represents the general category this insight belongs to.
-
-        Instructions:
-        1. The topic should be a broad category, not a repetition of the full insight.
-        2. You MUST write your response in the same language used in the original insight (e.g., Danish, etc.).
-        3. Keep the title between 2 to 4 words, avoiding unnecessary details.
+            Instructions:
+            1. The topic should be a broad category, not a repetition of the full insight.
+            2. You MUST write your response in the same language used in the original insight (e.g., Danish, etc.).
+            3. Keep the title between 2 to 4 words, avoiding unnecessary details.
         """
         
         try:
@@ -499,7 +495,6 @@ class AnalysisService:
         
         for i, comment in enumerate(comments):
             isPredefined = process_predefined(comment)
-            print("\n\n", comment, isPredefined)
             if not isPredefined:
                 insights_data = self.extract_insights(comment)
                 for insight in insights_data:
@@ -649,9 +644,10 @@ class AnalysisService:
         plot_data = block_df.iloc[:3] if len(block_df) > 3 else block_df
         plot_data.plot(kind="bar", color="blue", edgecolor="black")
         
-        plt.xlabel("Category")
-        plt.ylabel("Count")
-        plt.title(plot_title, fontweight='bold')
+        plt.xlabel("Category", labelpad=30)
+        plt.ylabel("Count", labelpad=30)
+        plt.title(plot_title, fontweight='bold', pad=30)
+        plt.tight_layout()
         plt.xticks(rotation=90)
         plt.grid(axis='y', linestyle='--', alpha=0.7)
         
@@ -832,7 +828,7 @@ class AnalysisService:
         comments_count = df['Comments'].notna().sum()
         # Calculate NPS distribution
         nps_distribution_start = time.time()
-        nps_obj, nps_plot = self.calculate_nps_distribution(df)
+        nps_score, nps_obj, nps_plot = self.calculate_nps_distribution(df)
         nps_distribution_end = time.time()
         self.speed_list.append({
             "script": "calculate nps distribution",
@@ -897,6 +893,7 @@ class AnalysisService:
         analysis_results = {
             "sessionId": session_id,
             "nps_categories": nps_obj,
+            "nps_score": nps_score,
             # "nps_plot": nps_plot,
             "nps_plot_base64": self.fig_to_base64(nps_plot),
             "positive_summary": positive_sum,
