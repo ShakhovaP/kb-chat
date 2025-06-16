@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import json
 import os
@@ -5,12 +6,14 @@ from typing import List, Dict, Tuple, Optional, Any, Union
 import io
 import base64
 
+import httpx
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from bertopic import BERTopic
 from sklearn.metrics.pairwise import cosine_similarity
 from sentence_transformers import SentenceTransformer
+from hdbscan import HDBSCAN
 from langchain_mongodb import MongoDBChatMessageHistory
 
 from services.config_manager import ConfigManager
@@ -39,14 +42,24 @@ class AnalysisService:
         self.config_manager = ConfigManager()
         self.azure_services = AzureServiceClients(self.config_manager)
         self.openai_deployment = self.config_manager.get_required_env("AZURE_OPENAI_GPT_DEPLOYMENT")
+        
+        self.openai_endpoint = self.config_manager.get_required_env("AZURE_OPENAI_ENDPOINT")
+        self.openai_apikey = self.config_manager.get_required_env("AZURE_OPENAI_API_KEY")
+
         self.mongodb_uri = self.config_manager.get_required_env("MONGODB_URI")
         
         # Initialize NLP models
         self.sentence_model = SentenceTransformer('all-MiniLM-L6-v2')
-        self.bertopic_model = BERTopic(embedding_model=self.sentence_model, calculate_probabilities=True)
+        self.hdbscan_model = HDBSCAN(
+            min_cluster_size=2,
+            metric='euclidean',
+            cluster_selection_method='eom',
+            prediction_data=True
+        )
+        self.bertopic_model = BERTopic(embedding_model=self.sentence_model, hdbscan_model=self.hdbscan_model, calculate_probabilities=True, verbose=True)
 
         self.generated_topics = []
-        self.speed_list = []
+        # self.speed_list = []
 
     def read_excel(self, file_path: str) -> pd.DataFrame | dict:
         """
@@ -317,223 +330,215 @@ class AnalysisService:
         plt.tight_layout()
         
         return nps_score, categories, fig
+    
+    async def extract_insights_async(self, comments: List[str]) -> List[Dict]:
+        endpoint = f"{self.openai_endpoint}/openai/deployments/{self.openai_deployment}/chat/completions?api-version=2024-02-15-preview"
 
-    def extract_insights(self, comment: str) -> List[Dict]:
-        """
-        Extract insights from a customer comment using Azure OpenAI.
-        
-        Args:
-            comment: Customer comment text
-            
-        Returns:
-            List of insights with satisfaction indicators
-        """
         prompt = f"""
-        Given a customer comment about service improvements:
-        "{comment}"
-        Your task is to extract distinct and concise insights from the comment. 
-        For each insight, determine whether the customer is satisfied or not.
+            Given a list of customer comments about service improvements:
+            "{comments}"
+            Your task is to extract distinct and concise insights from each comment. 
+            For each insight, determine whether the customer is satisfied or not.
 
-        1. You MUST write insights in the same language used in the input comment (e.g., Danish, etc.).
-        2. Format your response as a JSON array of objects, where each object has:
-         - "insight": brief, unique summary (max 10 words)
-         - "isSatisfied": 
-                - true if the customer is clearly positive about the aspect
-                - false if the customer expresses dissatisfaction, complaint, or frustration.
-        
-        Example format:
-        [
-            {{"insight": "website navigation is confusing", "isSatisfied": false}},
-            {{"insight": "customer service was helpful", "isSatisfied": true}}
-        ]
+            1. Extract all meaningful insights from each comment. A single comment may contain multiple insights.
+            2. You MUST write insights in the same language used in the input comment.
+            3. Format your response as a JSON array of objects, where each object has:
+            - "comment": original comment
+            - "insight": brief, unique summary (max 10 words)
+            - "isSatisfied": 
+                    - true if the customer is clearly positive about the aspect
+                    - false if the customer expresses dissatisfaction, complaint, or frustration.
+            
+            Example format:
+            [
+                {{
+                    "comment":"The website is hard to use. But customer service was great and very helpful!", 
+                    "insight": "website navigation is confusing", 
+                    "isSatisfied": false
+                }},
+                {{
+                    "comment":"The website is hard to use. But customer service was great and very helpful!",
+                    "insight": "customer service was helpful", 
+                    "isSatisfied": true
+                }}
+            ]
         """
-        
+        headers = {
+            "api-key": self.openai_apikey,
+            "Content-Type": "application/json"
+        }
+
+        body = {
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0.1,
+            "response_format": {"type": "json_object"},
+        }
+
         try:
-            response = self.azure_services.azure_openai_client.chat.completions.create(
-                model=self.openai_deployment,
-                messages=[{"role": "user", "content": prompt}],
-                response_format={"type": "json_object"},
-                temperature=0.1
-            )
-            
-            content = response.choices[0].message.content
-            insights_data = json.loads(content)
-            
-            # Handle different possible response structures
-            if isinstance(insights_data, list):
-                return insights_data
-            elif "insights" in insights_data and "isSatisfied" in insights_data:
-                return insights_data
-            elif isinstance(insights_data, dict) and any(isinstance(insights_data.get(k), list) for k in insights_data):
-                # Find the first list in the response
-                for k, v in insights_data.items():
-                    if isinstance(v, list):
-                        return v
-            else:
-                # Create a simple structure if format is unexpected
-                return [{"insight": content.strip(), "isSatisfied": False}]
-                
+            async with httpx.AsyncClient(timeout=20.0) as client:
+                response = await client.post(endpoint, headers=headers, json=body)
+                response.raise_for_status()
+                content = response.json()["choices"][0]["message"]["content"]
+                logger.debug(f"Raw OpenAI content: {content}")
+
+                parsed = json.loads(content)
+
+                # Validate structure
+                if isinstance(parsed, list):
+                    if all(isinstance(item, dict) and "insight" in item and "isSatisfied" in item for item in parsed):
+                        return parsed
+                    else:
+                        logger.error("Malformed list content: expected list of dicts with keys")
+                elif isinstance(parsed, dict):
+                    for v in parsed.values():
+                        if isinstance(v, list):
+                            return v
+
+                logger.error(f"Unexpected OpenAI response format: {parsed}")
+                return [{"insight": str(parsed), "isSatisfied": False}]
+
         except json.JSONDecodeError as e:
-            logger.error(f"Error parsing OpenAI response: {e}")
-            logger.error(f"Raw response: {content}")
-            return [{"insight": "Error parsing response", "isSatisfied": False}]
+            logger.error(f"JSON decode error: {e}")
+            return [{"insight": "Error parsing OpenAI response", "isSatisfied": False}]
         except Exception as e:
-            logger.error(f"Unexpected error in extract_insights: {e}")
+            logger.error(f"Async OpenAI call failed: {e}")
             return [{"insight": "Error processing comment", "isSatisfied": False}]
 
-    def determine_topic(self, insight_text: str, similarity_threshold: float = 0.5) -> Tuple[str, bool]:
+    async def determine_topic_async(self, insight_text: str, similarity_threshold: float = 0.5) -> Tuple[str, bool]:
         """
-        Determine the topic category for an insight.
-        
-        Args:
-            insight_text: The insight text to categorize
-            similarity_threshold: Threshold for matching with predefined topics
-            
-        Returns:
-            Tuple of (topic_name, is_new_topic)
+        Asynchronously determine the topic category for an insight.
         """
-        # Encode the insight and predefined topics
         topics_list = self.PREDEFINED_TOPICS + self.generated_topics
         insight_embedding = self.sentence_model.encode([insight_text])[0]
         topics_embeddings = self.sentence_model.encode(topics_list)
-        # topics_embeddings = self.sentence_model.encode(self.PREDEFINED_TOPICS)
-        
-        # Calculate cosine similarity
+
         similarities = cosine_similarity([insight_embedding], topics_embeddings)[0]
-        
-        # Find the most similar topic
-        max_similarity_index = np.argmax(similarities)
+        max_similarity_index = int(np.argmax(similarities))
         max_similarity = similarities[max_similarity_index]
-        
+
         if max_similarity >= similarity_threshold:
-            # return self.PREDEFINED_TOPICS[max_similarity_index], False
             return topics_list[max_similarity_index], False
         else:
-            # Generate new topic with OpenAI
-            return self._generate_new_topic(insight_text)
+            return await self._generate_new_topic_async(insight_text)
 
-    def _generate_new_topic(self, insight_text: str) -> Tuple[str, bool]:
+    async def _generate_new_topic_async(self, insight_text: str) -> Tuple[str, bool]:
         """
-        Generate a new topic name for an insight using Azure OpenAI.
-        
-        Args:
-            insight_text: The insight text to categorize
-            
-        Returns:
-            Tuple of (topic_name, is_new_topic=True)
+        Asynchronously generate a new topic name for an insight using Azure OpenAI.
         """
         prompt = f"""
-            Given a customer feedback insight:
-            "{insight_text}"
-
-            Your task is to generate a short and concise topic title 
-            that represents the general category this insight belongs to.
-
-            Instructions:
-            1. The topic should be a broad category, not a repetition of the full insight.
-            2. You MUST write your response in the same language used in the original insight (e.g., Danish, etc.).
-            3. Keep the title between 2 to 4 words, avoiding unnecessary details.
+        Create a short, concise topic title (2-4 words) for the following customer feedback insight:
+        "{insight_text}"
+        The topic should be a general category that this insight falls under.
         """
-        
+
+        endpoint = f"{self.openai_endpoint}/openai/deployments/{self.openai_deployment}/chat/completions?api-version=2024-02-15-preview"
+
+        headers = {
+            "api-key": self.openai_apikey,
+            "Content-Type": "application/json"
+        }
+
+        body = {
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0.1,
+            "max_tokens": 15
+        }
+
         try:
-            response = self.azure_services.azure_openai_client.chat.completions.create(
-                model=self.openai_deployment,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.1,
-                max_tokens=15
-            )
-            
-            if (hasattr(response, 'choices') and 
-                len(response.choices) > 0 and
-                hasattr(response.choices[0], 'message') and 
-                hasattr(response.choices[0].message, 'content')):
-                
-                new_topic = response.choices[0].message.content
-                if new_topic:
-                    self.generated_topics.append(new_topic.strip().strip('"'))
-                    return new_topic.strip().strip('"'), True
-            
-            # Fallback if response doesn't have expected structure
-            logger.warning(f"Unexpected response structure: {response}")
-            return f"Topic for: {insight_text[:20]}...", True
-            
+            async with httpx.AsyncClient(timeout=20.0) as client:
+                response = await client.post(endpoint, headers=headers, json=body)
+                response.raise_for_status()
+                content = response.json()["choices"][0]["message"]["content"]
+                topic = content.strip().strip('"')
+                if topic:
+                    self.generated_topics.append(topic)
+                    return topic, True
+                else:
+                    return f"insight_text[:20]...", True
         except Exception as e:
             logger.error(f"Error generating topic with OpenAI: {e}")
-            return f"Topic for: {insight_text[:20]}...", True
+            return f"{insight_text[:20]}...", True
 
-    def process_customer_comments(self, comments: List[str], message_history) -> List[Dict]:
-        """
-        Process a list of customer comments to extract insights and determine topics.
-        
-        Args:
-            comments: List of customer comment strings
-            
-        Returns:
-            List of processed comments with associated insights
-        """
+    async def process_customer_comments_async(self, comments: List[str], message_history) -> List[Dict]:
+        # print("process_customer_comments_async")
         results = []
-        
-        # Collect all insights for BERTopic training
         all_insights_text = []
         comments_insights_map = []
 
         insights_extraction_start = time.time()
-        def process_predefined(comment):
-            splited_comment = comment.split(", ")
-            print("splited_comment", splited_comment)
-            if all(item.lower() in self.PREDEFINED_TOPICS for item in splited_comment):
-                print("comment", comment)
-                for insight in splited_comment:
-                    all_insights_text.append(insight + "  needs improvement")
-                    comments_insights_map.append({
-                        "comment": comment,
-                        "insight": insight + "  needs improvement",
-                        "isSatisfied": False
-                    })
-                return True
-            return False
-        
-        for i, comment in enumerate(comments):
-            isPredefined = process_predefined(comment)
-            if not isPredefined:
-                insights_data = self.extract_insights(comment)
-                for insight in insights_data:
-                    all_insights_text.append(insight["insight"])
-                    comments_insights_map.append({
-                        "comment": comment,
-                        "insight": insight["insight"],
-                        "isSatisfied": insight["isSatisfied"]
-                    })
-        insights_extraction_end = time.time()
-        self.speed_list.append({
-            "script": "extract insights from comments using OpenAI",
-            "time_to_exec": insights_extraction_end - insights_extraction_start
-        })
 
-        # BERTopic model 
-        bertopic_categorisation_start = time.time()
+        step = 10
+        batches = [
+            comments[i:i + step]
+            for i in range(0, len(comments), step)
+        ]
+
+        tasks = [self.extract_insights_async(batch) for batch in batches]
+        insights_results = await asyncio.gather(*tasks)
+        # print("insights_results", insights_results)
+
+        for el in insights_results:
+            for obj in el:
+                all_insights_text.append(obj["insight"])
+                comments_insights_map.append({
+                    "comment": obj["comment"],
+                    "insight": obj["insight"],
+                    "isSatisfied": obj["isSatisfied"]
+                })
+        # all_insights_text = [obj["insight"] for obj in comments_insights_map]    
+        # print("all_insights_text", all_insights_text)
+
+        # insights_extraction_end = time.time()
+        # self.speed_list.append({
+        #     "script": "extract insights from comments using OpenAI",
+        #     "time_to_exec": insights_extraction_end - insights_extraction_start
+        # })
+
+        # BERTopic
+        # bertopic_categorisation_start = time.time()
         topics = None
-        if len(all_insights_text) >= 2:  # BERTopic needs at least 2 documents
+        if len(all_insights_text) >= 2:
             topics, _ = self.bertopic_model.fit_transform(all_insights_text)
-        bertopic_categorisation_end = time.time()
-        self.speed_list.append({
-            "script": "categorise using BERTopic",
-            "time_to_exec": bertopic_categorisation_end - bertopic_categorisation_start
-        })
-        
-        print("comments_insights_map", comments_insights_map)
-        # Process each comment with its insights
-        insight_index = 0
+        # bertopic_categorisation_end = time.time()
+        # self.speed_list.append({
+        #     "script": "categorise using BERTopic",
+        #     "time_to_exec": bertopic_categorisation_end - bertopic_categorisation_start
+        # })
+        # print(2)
+        # topic_determination_start = time.time()
+
+        # Async topic determination
+        async def enrich_insight_with_topic(index, item):
+            insight_text = item["insight"]
+            if topics and len(all_insights_text) >= 2:
+                bertopic_idx = topics[index]
+                if bertopic_idx != -1:
+                    topic_words = self.bertopic_model.get_topic(bertopic_idx)
+                    bertopic_topic = " ".join([word for word, _ in topic_words[:2]])
+                else:
+                    bertopic_topic = "Miscellaneous"
+
+            final_topic, is_new = await self.determine_topic_async(insight_text)
+            return {
+                "comment": item["comment"],
+                "insight": insight_text,
+                "isSatisfied": item["isSatisfied"],
+                "topic": final_topic
+            }
+
+        enriched_tasks = [
+            enrich_insight_with_topic(idx, item)
+            for idx, item in enumerate(comments_insights_map)
+        ]
+        enriched_results = await asyncio.gather(*enriched_tasks)
+
+        # Aggregate results per comment
+        results = []
         current_comment = None
         comment_results = []
-        
-        topic_determination_start = time.time()
-        for item in comments_insights_map:
-            comment = item["comment"]
-            insight_text = item["insight"]
-            is_satisfied = item["isSatisfied"]
-            
-            # Start a new comment result if needed
+
+        for enriched in enriched_results:
+            comment = enriched["comment"]
             if comment != current_comment:
                 if current_comment is not None:
                     results.append({
@@ -542,46 +547,25 @@ class AnalysisService:
                     })
                 current_comment = comment
                 comment_results = []
-            
-            # Determine the topic
-            if topics and len(all_insights_text) >= 2:
-                # Get BERTopic's assigned topic
-                bertopic_idx = topics[insight_index]
-                
-                # Get the topic name
-                if bertopic_idx != -1:  # -1 is the outlier topic in BERTopic
-                    topic_words = self.bertopic_model.get_topic(bertopic_idx)
-                    bertopic_topic = " ".join([word for word, _ in topic_words[:2]])
-                else:
-                    bertopic_topic = "Miscellaneous"
-                    
-                # Match with predefined topics or use BERTopic result
-                final_topic, is_new = self.determine_topic(insight_text)
-            else:
-                # For very small datasets, just match with predefined topics
-                final_topic, is_new = self.determine_topic(insight_text)
-            
-            # Add to current comment results
+
             comment_results.append({
-                "topic": final_topic,
-                "insight": insight_text,
-                "isSatisfied": is_satisfied
+                "topic": enriched["topic"],
+                "insight": enriched["insight"],
+                "isSatisfied": enriched["isSatisfied"]
             })
-            
-            insight_index += 1
-        topic_determination_end = time.time()
-        self.speed_list.append({
-            "script": "determine topics with OpenAI",
-            "time_to_exec": topic_determination_end - topic_determination_start
-        })
-        
-        # Add the last comment
+
         if current_comment is not None:
             results.append({
                 "comment": current_comment,
                 "summary": comment_results
             })
-        
+
+        # topic_determination_end = time.time()
+        # self.speed_list.append({
+        #     "script": "determine topics with OpenAI",
+        #     "time_to_exec": topic_determination_end - topic_determination_start
+        # })
+
         return results
 
     def collect_insights(self, data: List[Dict]) -> pd.DataFrame:
@@ -797,7 +781,7 @@ class AnalysisService:
         img_str = base64.b64encode(buf.read()).decode('utf-8')
         return img_str
 
-    def analyze_document(self, file_path: str, session_id: str) -> Dict[str, Any]:
+    async def analyze_document(self, file_path: str, session_id: str) -> Dict[str, Any]:
         """
         Analyze customer feedback document and generate comprehensive insights.
         
@@ -827,19 +811,20 @@ class AnalysisService:
         # comments_count = len(df[df['Comments'].astype(str) != "NaN"])
         comments_count = df['Comments'].notna().sum()
         # Calculate NPS distribution
-        nps_distribution_start = time.time()
+        # nps_distribution_start = time.time()
         nps_score, nps_obj, nps_plot = self.calculate_nps_distribution(df)
-        nps_distribution_end = time.time()
-        self.speed_list.append({
-            "script": "calculate nps distribution",
-            "time_to_exec": nps_distribution_end - nps_distribution_start
-        })
+        # nps_distribution_end = time.time()
+        # self.speed_list.append({
+        #     "script": "calculate nps distribution",
+        #     "time_to_exec": nps_distribution_end - nps_distribution_start
+        # })
         
         # Load test data from file
         try:
             # comments_list = list(df['Comments'])
             comments_list = list(df['Comments'].dropna())
-            data = self.process_customer_comments(comments_list, message_history)
+            print("before process_customer_comments_async")
+            data = await self.process_customer_comments_async(comments_list, message_history)
         except Exception as e:
             error_msg = f"Error loading test data: {str(e)}"
             logger.error(error_msg)
@@ -860,7 +845,7 @@ class AnalysisService:
         
         insights_df['score'] = insights_df.apply(get_score, axis=1)
         
-        analysis_generation_start = time.time()
+        # analysis_generation_start = time.time()
         # Split insights by NPS category
         promoter_insights = insights_df[insights_df["score"] >= 9]
         detractor_insights = insights_df[insights_df["score"] <= 6]
@@ -881,12 +866,12 @@ class AnalysisService:
         pasv_improvement_summary, pasv_improvement_plot = self.generate_improvement_summary(
             passive_insights, "Passives"
         )
-        analysis_generation_end = time.time()
-        self.speed_list.append({
-            "script": "generate analysis",
-            "time_to_exec": analysis_generation_end - analysis_generation_start
-        })
-        speed_df = pd.DataFrame(self.speed_list)
+        # analysis_generation_end = time.time()
+        # self.speed_list.append({
+        #     "script": "generate analysis",
+        #     "time_to_exec": analysis_generation_end - analysis_generation_start
+        # })
+        # speed_df = pd.DataFrame(self.speed_list)
         # speed_df.to_csv(f"exec_time_for_{rows_count}_rows_{comments_count}_comm.csv")
 
         # Compile analysis results

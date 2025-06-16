@@ -6,4 +6,8 @@ body {
     max-width: 50% !important;
     width: 50% !important;
 } */
-
+.button {
+  background-color: #0190DF;
+  border-color: #0190DF; /* if your buttons have borders */
+  color: white; /* ensures good contrast */
+}

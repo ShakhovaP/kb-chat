@@ -11,5 +11,4 @@ env/
 .vscode/
 
 chainlit.md
-.chainlit/
 .files/

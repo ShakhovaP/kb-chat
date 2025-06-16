@@ -258,7 +258,7 @@ class KnowledgeBaseService:
             self.upload_vectors_to_search(chunks)
             
             return {
-                "document": file_path,
+                "document": file_name,
                 "status": "processed"
             }
         
@@ -300,13 +300,18 @@ class KnowledgeBaseService:
             self.upload_vectors_to_search(chunks)
             
             return {
-                "document": file_path,
+                "document": file_name,
                 "status": "processed"
             }
         
         except Exception as e:
             self.logger.error(f"PDF processing error: {str(e)}")
             raise
+    def get_transcription(self, file_path: str, speech_language: str | None) -> str:
+        speech_config = self.azure_services.speech_config
+        if speech_language: speech_config.speech_recognition_language=speech_language
+        transcription = self.process_speech(file_path, speech_config)
+        return transcription
 
     async def process_video_with_link(self, file_path: str, file_name: str, url: str, speech_language: str | None) -> Dict[str, str]:
         """
@@ -316,10 +321,7 @@ class KnowledgeBaseService:
         :return: Processing result with document ID
         """
         try:
-
-            speech_config = self.azure_services.speech_config
-            if speech_language: speech_config.speech_recognition_language=speech_language
-            transcription = self.process_speech(file_path, speech_config)
+            transcription = self.get_transcription(file_path, speech_language)
 
             file_name = os.path.basename(file_path).replace(".mp4", "")
 
@@ -340,8 +342,9 @@ class KnowledgeBaseService:
             self.upload_vectors_to_search(chunks)
             
             return {
-                "document": file_path,
-                "status": "processed"
+                "document": file_name,
+                "status": "processed",
+                "transcription": transcription
             }
         
         except Exception as e:

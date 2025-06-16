@@ -87,11 +87,48 @@ async def process_file(
             result = await kb.process_video_with_link(temp_file_path, file.filename, url, speech_language)
             file_type = "video"
         
-        return {
-            "message": f"{file_type} processed successfully",
-            "filename": file.filename,
-            "document_id": result.get("document_id")
-        }
+
+        
+        return result
+    # {
+    #         "message": f"{file_type} processed successfully",
+    #         "filename": file.filename,
+    #         "document_id": result.get("document_id")
+    #     }
+    
+    except Exception as e:
+        logger.error(f"Error processing {file_extension} file: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error processing file: {str(e)}")
+    
+    finally:
+        # Clean up temporary file
+        if os.path.exists(temp_file_path):
+            os.unlink(temp_file_path)
+
+
+@app.post("/get_transcription")
+async def process_file(
+    file: UploadFile, 
+    # url: str,
+    speech_language: Optional[SpeechLanguage] = Query(
+        default=None,
+        description="BCP-47 language code for speech recognition"
+    )):
+    """
+    Process PDF, PPTX, or MP4 files: extract content, structure it, generate embeddings, and store in search.
+    """
+    # Validate file extension
+    file_extension = '.mp4'
+    if not file.filename.endswith((file_extension)):
+        return {"error": "Unsupported file format. Please upload PDF, PPTX, or MP4 files only."}
+    
+    with tempfile.NamedTemporaryFile(delete=False, suffix=file_extension) as temp_file:
+        temp_file.write(await file.read())
+        temp_file_path = temp_file.name
+    
+    try:
+        result = kb.get_transcription(temp_file_path, speech_language)
+        return result
     
     except Exception as e:
         logger.error(f"Error processing {file_extension} file: {str(e)}")
@@ -142,7 +179,7 @@ async def process_excel(file: UploadFile, session_id: str = Query(...)):
         temp_file_path = temp_file.name
     
     try:
-        analysis_results = analysis.analyze_document(temp_file_path, session_id)        
+        analysis_results = await analysis.analyze_document(temp_file_path, session_id)        
         return analysis_results
     
     except Exception as e:
